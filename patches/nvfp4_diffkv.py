@@ -11,9 +11,10 @@ scale folded to 1.0). e2m1 codes: sign bit 3, magnitudes {0, .5, 1, 1.5, 2, 3, 4
 
 MiMo-V2.6 (hqk 192 / hv 128): 96 + 12 + 64 + 8 = 180 B per token per head, vs 320 B in fp8 and 640 B in bf16.
 
-The attention kernel (triton_unified_attention_diffkv.py, NVFP4_KV_CACHE=True) reads the even and odd halves of K
-and V as two half-width tiles: Q.K = Q_even.K_lo + Q_odd.K_hi, and P.V lands in two accumulators stored to the even
-and odd output columns, so no nibble interleave is ever materialised.
+The attention kernel (triton_unified_attention_diffkv.py, NVFP4_KV_CACHE=True) decodes per element: element d of a
+K or V row loads byte d // 2, takes nibble d % 2 and scale d // 16, and builds the fp16 value from bits, so the tiles
+have exactly the fp8 path's shape and register footprint. (A first version split Q, K, V and the accumulator into
+even/odd halves; it doubled the per-program state and made prefill ~100x slower.)
 """
 import torch
 import triton
@@ -152,3 +153,68 @@ def dequant_nvfp4_cache(kv_cache: torch.Tensor, head_size_qk: int, head_size_v: 
     k = side(kv_cache[..., kd:ks], kv_cache[..., ks:vd], head_size_qk)
     v = side(kv_cache[..., vd:vs], kv_cache[..., vs:vs + head_size_v // 16], head_size_v)
     return torch.cat([k, v], dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# Prefill: dequantize the blocks a chunk touches once, then run the bf16 attention path on them. Inside the attention
+# kernel every q-block program would otherwise decode the whole context again (512 programs per KV head for a
+# 4096-token chunk). NVFP4 values (1-bit mantissa x e4m3 scale) are exact in bf16.
+@triton.jit
+def _dequant_blocks_kernel(
+    cache_ptr, src_blocks_ptr, out_ptr,
+    c_s0, c_s1, c_s2,            # cache strides: block, kv head, token   (vLLM layout [blocks, H, BS, ROW])
+    o_s0, o_s1, o_s2,            # out strides:   block, token, kv head   ([n, BS, H, HQK + HV])
+    BLOCK_SIZE: tl.constexpr, HQK: tl.constexpr, HV: tl.constexpr, DQK_P: tl.constexpr, DV_P: tl.constexpr,
+    K_DATA_OFF: tl.constexpr, K_SCALE_OFF: tl.constexpr, V_DATA_OFF: tl.constexpr, V_SCALE_OFF: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    b = pid // BLOCK_SIZE
+    t = pid % BLOCK_SIZE
+    h = tl.program_id(1)
+    src = tl.load(src_blocks_ptr + b).to(tl.int64)
+    row = cache_ptr + src * c_s0 + h * c_s1 + t * c_s2
+    dst = out_ptr + b.to(tl.int64) * o_s0 + t * o_s1 + h * o_s2
+    d = tl.arange(0, DQK_P)
+    m = d < HQK
+    byte = tl.load(row + K_DATA_OFF + d // 2, mask=m, other=0)
+    sc = tl.load(row + K_SCALE_OFF + d // 16, mask=m, other=0)
+    nib = (byte >> ((d & 1) * 4).to(tl.uint8)) & 15
+    val = _e2m1_to_f32(nib) * sc.to(tl.float8e4nv, bitcast=True).to(tl.float32)
+    tl.store(dst + d, val.to(tl.bfloat16), mask=m)
+    e = tl.arange(0, DV_P)
+    mv = e < HV
+    vbyte = tl.load(row + V_DATA_OFF + e // 2, mask=mv, other=0)
+    vsc = tl.load(row + V_SCALE_OFF + e // 16, mask=mv, other=0)
+    vnib = (vbyte >> ((e & 1) * 4).to(tl.uint8)) & 15
+    vval = _e2m1_to_f32(vnib) * vsc.to(tl.float8e4nv, bitcast=True).to(tl.float32)
+    tl.store(dst + HQK + e, vval.to(tl.bfloat16), mask=mv)
+
+
+@triton.jit
+def _e2m1_to_f32(n):
+    c = n.to(tl.uint16)
+    mag = c & 7
+    bits = tl.where(mag < 2, mag * 0x3800, (mag << 9) + 0x3800) | ((c & 8) << 12)
+    return bits.to(tl.uint16).to(tl.float16, bitcast=True).to(tl.float32)
+
+
+def dequant_nvfp4_blocks(kv_cache: torch.Tensor, src_blocks: torch.Tensor, head_size_qk: int, head_size_v: int,
+                         out: torch.Tensor | None = None) -> torch.Tensor:
+    """kv_cache [num_blocks, H, BS, ROW] uint8 (vLLM layout), src_blocks [n] int -> [n, BS, H, hqk+hv] bf16."""
+    nb, H, BS, ROW = kv_cache.shape
+    n = src_blocks.numel()
+    if out is None:
+        out = torch.empty(n, BS, H, head_size_qk + head_size_v, device=kv_cache.device, dtype=torch.bfloat16)
+    if n == 0:
+        return out
+    kd, ks, vd, vs = nvfp4_offsets(head_size_qk, head_size_v)
+    _dequant_blocks_kernel[(n * BS, H)](
+        kv_cache, src_blocks, out,
+        kv_cache.stride(0), kv_cache.stride(1), kv_cache.stride(2),
+        out.stride(0), out.stride(1), out.stride(2),
+        BLOCK_SIZE=BS, HQK=head_size_qk, HV=head_size_v,
+        DQK_P=triton.next_power_of_2(head_size_qk), DV_P=triton.next_power_of_2(head_size_v),
+        K_DATA_OFF=kd, K_SCALE_OFF=ks, V_DATA_OFF=vd, V_SCALE_OFF=vs,
+        num_warps=2,
+    )
+    return out

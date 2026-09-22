@@ -35,6 +35,7 @@ from vllm.v1.attention.ops.triton_reshape_and_cache_flash import (
     triton_reshape_and_cache_flash_diffkv,
 )
 from vllm.v1.attention.ops.nvfp4_diffkv import (
+    dequant_nvfp4_blocks,
     nvfp4_row_bytes,
     reshape_and_cache_nvfp4_diffkv,
 )
@@ -44,6 +45,12 @@ from vllm.v1.attention.ops.triton_unified_attention_diffkv import (
 from vllm.v1.kv_cache_interface import AttentionSpec
 
 logger = init_logger(__name__)
+
+# mimo26: NVFP4 prefill on global layers dequantizes the touched blocks once (bf16) and runs the bf16 kernel path
+# when the partition has at least this many query tokens (0 = never; in-kernel decode for everything). The bf16
+# scratch is capped at MIMO26_NVFP4_DQ_MAX_MB; larger requests use the in-kernel decode.
+_NVFP4_DQ_MIN_Q = int(os.environ.get("MIMO26_NVFP4_DQ_MIN_Q", "64"))
+_NVFP4_DQ_MAX_BYTES = int(float(os.environ.get("MIMO26_NVFP4_DQ_MAX_MB", "1536")) * 2**20)
 
 # thor patch: purpose-built prefill attention for the global (non-SWA, no-sink) layers, TP2 shape 32/2 heads, 192/128.
 _PF_MIN_Q = int(os.environ.get("VLLM_DIFFKV_CUSTOM_PREFILL_MIN_Q", "64"))  # 0 = disabled
@@ -349,6 +356,7 @@ class TritonAttentionDiffKVImpl(TritonAttentionImpl):
         # Triton DiffKV kernels consume (B, N, H, D) cache views.
         kv_cache = kv_cache.transpose(1, 2)
         if self.is_nvfp4:
+            nvfp4_bhnc = kv_cache.transpose(1, 2)  # vLLM layout (B, H, N, ROW) for the prefill dequant
             nvfp4_view = kv_cache  # (B, N, H, ROW) uint8; the kernel decodes nibbles + scales itself
             kv_packed = kv_cache
             key_cache = kv_cache
@@ -386,6 +394,48 @@ class TritonAttentionDiffKVImpl(TritonAttentionImpl):
                     partition.seq_lens, qb_seq, qb_start, float(self.scale), kd, vd, output[token_start:token_end])
                 token_start = token_end
                 continue
+            if (
+                self.is_nvfp4
+                and _NVFP4_DQ_MIN_Q > 0
+                and partition.max_query_len >= _NVFP4_DQ_MIN_Q
+                and self.sliding_window == (-1, -1)
+            ):
+                blk = nvfp4_bhnc.shape[2]
+                n_used = -(-int(partition.max_seq_len) // blk)
+                used = partition.block_table[:, :n_used]
+                need = used.numel() * blk * nvfp4_bhnc.shape[1] * (head_size_qk + head_size_v) * 2
+                if need <= _NVFP4_DQ_MAX_BYTES:
+                    scratch = dequant_nvfp4_blocks(
+                        nvfp4_bhnc, used.reshape(-1).clamp_min(0), head_size_qk, head_size_v
+                    )
+                    scratch_bt = torch.arange(
+                        used.numel(), device=used.device, dtype=torch.int32
+                    ).view(used.shape)
+                    unified_attention_diffkv(
+                        q=query[token_start:token_end],
+                        k=scratch[..., :head_size_qk],
+                        v=scratch[..., head_size_qk:],
+                        out=output[token_start:token_end],
+                        cu_seqlens_q=partition.query_start_loc,
+                        seqused_k=partition.seq_lens,
+                        softmax_scale=self.scale,
+                        causal=True,
+                        alibi_slopes=self.alibi_slopes,
+                        use_alibi_sqrt=self.use_alibi_sqrt,
+                        window_size=self.sliding_window,
+                        block_table=scratch_bt,
+                        softcap=self.logits_soft_cap,
+                        sinks=self.sinks,
+                        max_seqlen_q=partition.max_query_len,
+                        seq_threshold_3D=partition.seq_threshold_3D,
+                        num_par_softmax_segments=partition.num_par_softmax_segments,
+                        softmax_segm_output=partition.softmax_segm_output,
+                        softmax_segm_max=partition.softmax_segm_max,
+                        softmax_segm_expsum=partition.softmax_segm_expsum,
+                    )
+                    del scratch
+                    token_start = token_end
+                    continue
             unified_attention_diffkv(
                 q=query[token_start:token_end],
                 k=key_cache,

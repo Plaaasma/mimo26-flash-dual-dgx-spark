@@ -71,12 +71,13 @@ _SPEC_3D_TILE = int(os.environ.get("VLLM_DIFFKV_SPEC_3D_TILE", "16"))
 
 
 @triton.jit
-def _e2m1_decode(n):
-    """4-bit e2m1 nibble (uint8 0..15) -> fp16 value in {0, .5, 1, 1.5, 2, 3, 4, 6} with sign bit 3."""
-    m = n & 7
-    v = tl.where(m == 0, 0.0, tl.where(m == 1, 0.5, tl.where(m == 2, 1.0, tl.where(m == 3, 1.5,
-        tl.where(m == 4, 2.0, tl.where(m == 5, 3.0, tl.where(m == 6, 4.0, 6.0)))))))
-    return tl.where((n & 8) != 0, -v, v).to(tl.float16)
+def _e2m1_to_f16(n):
+    """4-bit e2m1 code (uint8 0..15) -> fp16, built as bits: normal codes map to ((c & 7) << 9) + 0x3800
+    (1, 1.5, 2, 3, 4, 6), code 1 is the subnormal 0.5 = 0x3800, code 0 is 0, bit 3 is the sign."""
+    c = n.to(tl.uint16)
+    mag = c & 7
+    bits = tl.where(mag < 2, mag * 0x3800, (mag << 9) + 0x3800) | ((c & 8) << 12)
+    return bits.to(tl.uint16).to(tl.float16, bitcast=True)
 
 
 @triton.jit
@@ -96,15 +97,14 @@ def kernel_unified_attention_diffkv(
     k_descale_ptr,
     v_descale_ptr,
     FP8_KV_CACHE: tl.constexpr,
-    # mimo26 NVFP4 KV: key_cache_ptr/value_cache_ptr then both point at the packed uint8 row
-    # [K nibbles | K e4m3 scales | V nibbles | V e4m3 scales] (see nvfp4_diffkv.py).
+    # mimo26 NVFP4 KV: key_cache_ptr and value_cache_ptr both point at the packed uint8 row
+    # [K nibbles | K e4m3 scales | V nibbles | V e4m3 scales] (see nvfp4_diffkv.py); element d reads byte d // 2
+    # (nibble d % 2) and scale d // 16, so the tiles come out in the same fp16 layout as the fp8 path.
     NVFP4_KV_CACHE: tl.constexpr,
     K_DATA_OFF: tl.constexpr,
     K_SCALE_OFF: tl.constexpr,
     V_DATA_OFF: tl.constexpr,
     V_SCALE_OFF: tl.constexpr,
-    HALF_QK_PADDED: tl.constexpr,
-    HALF_V_PADDED: tl.constexpr,
     block_tables_ptr,
     seq_lens_ptr,
     alibi_slopes_ptr,
@@ -197,25 +197,14 @@ def kernel_unified_attention_diffkv(
         mask=dim_mask_qk[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
         other=0.0,
     )
-    # NVFP4: even / odd halves of Q (fp16), each (BLOCK_M, HALF_QK_PADDED); K arrives as nibble halves.
-    offs_h_qk = tl.arange(0, HALF_QK_PADDED)
-    offs_h_v = tl.arange(0, HALF_V_PADDED)
-    half_mask_qk = tl.where(offs_h_qk < HEAD_SIZE_QK // 2, 1, 0).to(tl.int1)
-    half_mask_v = tl.where(offs_h_v < HEAD_SIZE_V // 2, 1, 0).to(tl.int1)
-    if NVFP4_KV_CACHE:
-        q_half_base = query_offset_0[:, None] * query_stride_0 + query_offset_1[:, None] * query_stride_1
-        q_half_mask = half_mask_qk[None, :] & query_mask_0[:, None] & query_mask_1[:, None]
-        Q_lo = tl.load(query_ptr + q_half_base + 2 * offs_h_qk[None, :], mask=q_half_mask, other=0.0).to(tl.float16)
-        Q_hi = tl.load(query_ptr + q_half_base + 2 * offs_h_qk[None, :] + 1, mask=q_half_mask, other=0.0).to(tl.float16)
-    else:
-        Q_lo = tl.zeros([BLOCK_M, HALF_QK_PADDED], dtype=tl.float16)
-        Q_hi = tl.zeros([BLOCK_M, HALF_QK_PADDED], dtype=tl.float16)
 
     if FP8_KV_CACHE:
         k_descale = tl.load(k_descale_ptr)
         v_descale = tl.load(v_descale_ptr)
         # fp8 KV: run the dots in fp16 -- SM120 converts E4M3->fp16 natively, E4M3->bf16 is a multi-step
         # path that made BLOCK_M 128 prefill 1.74x slower. fp16 also has more mantissa than bf16.
+        Q = Q.to(tl.float16)
+    if NVFP4_KV_CACHE:
         Q = Q.to(tl.float16)
 
     block_table_offset = seq_idx * block_table_stride
@@ -226,9 +215,6 @@ def kernel_unified_attention_diffkv(
     L = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
     # acc : (BLOCK_M, HEAD_SIZE_V_PADDED)
     acc = tl.zeros([BLOCK_M, HEAD_SIZE_V_PADDED], dtype=tl.float32)
-    # NVFP4: even / odd output columns accumulate separately
-    acc_lo = tl.zeros([BLOCK_M, HALF_V_PADDED], dtype=tl.float32)
-    acc_hi = tl.zeros([BLOCK_M, HALF_V_PADDED], dtype=tl.float32)
 
     context_len = seq_len - cur_batch_query_len
 
@@ -274,43 +260,28 @@ def kernel_unified_attention_diffkv(
             + (seq_offset % BLOCK_SIZE)[None, :] * stride_k_cache_1
         )
         if NVFP4_KV_CACHE:
-            # packed uint8 rows: K nibble bytes (HALF_QK_PADDED, TILE) + per-16 scales, V likewise (TILE, HALF_V_PADDED)
+            # K : (HEAD_SIZE_QK_PADDED, TILE_SIZE) fp16 from nibbles x per-16 e4m3 scales
             k_row = (
                 physical_block_idx[None, :] * stride_k_cache_0
                 + kv_head_idx * stride_k_cache_2
                 + (seq_offset % BLOCK_SIZE)[None, :] * stride_k_cache_1
             )
-            k_bytes = tl.load(
-                key_cache_ptr + k_row + K_DATA_OFF + offs_h_qk[:, None],
-                mask=half_mask_qk[:, None] & tile_mask[None, :],
-                other=0,
-            )
-            k_sc = tl.load(
-                key_cache_ptr + k_row + K_SCALE_OFF + (offs_h_qk // 8)[:, None],
-                mask=half_mask_qk[:, None] & tile_mask[None, :],
-                other=0,
-            ).to(tl.float8e4nv, bitcast=True).to(tl.float16)
-            K_lo = _e2m1_decode(k_bytes & 15) * k_sc
-            K_hi = _e2m1_decode(k_bytes >> 4) * k_sc
+            k_mask = dim_mask_qk[:, None] & tile_mask[None, :]
+            k_byte = tl.load(key_cache_ptr + k_row + K_DATA_OFF + (offs_d_qk // 2)[:, None], mask=k_mask, other=0)
+            k_sc = tl.load(key_cache_ptr + k_row + K_SCALE_OFF + (offs_d_qk // 16)[:, None], mask=k_mask, other=0)
+            k_nib = (k_byte >> ((offs_d_qk & 1) * 4).to(tl.uint8)[:, None]) & 15
+            K = _e2m1_to_f16(k_nib) * k_sc.to(tl.float8e4nv, bitcast=True).to(tl.float16)
+            # V : (TILE_SIZE, HEAD_SIZE_V_PADDED)
             v_row = (
                 physical_block_idx[:, None] * stride_v_cache_0
                 + kv_head_idx * stride_v_cache_2
                 + (seq_offset % BLOCK_SIZE)[:, None] * stride_v_cache_1
             )
-            v_bytes = tl.load(
-                value_cache_ptr + v_row + V_DATA_OFF + offs_h_v[None, :],
-                mask=half_mask_v[None, :] & tile_mask[:, None],
-                other=0,
-            )
-            v_sc = tl.load(
-                value_cache_ptr + v_row + V_SCALE_OFF + (offs_h_v // 8)[None, :],
-                mask=half_mask_v[None, :] & tile_mask[:, None],
-                other=0,
-            ).to(tl.float8e4nv, bitcast=True).to(tl.float16)
-            V_lo = _e2m1_decode(v_bytes & 15) * v_sc
-            V_hi = _e2m1_decode(v_bytes >> 4) * v_sc
-            K = tl.zeros([HEAD_SIZE_QK_PADDED, TILE_SIZE], dtype=tl.float16)
-            V = tl.zeros([TILE_SIZE, HEAD_SIZE_V_PADDED], dtype=tl.float16)
+            v_mask = dim_mask_v[None, :] & tile_mask[:, None]
+            v_byte = tl.load(value_cache_ptr + v_row + V_DATA_OFF + (offs_d_v // 2)[None, :], mask=v_mask, other=0)
+            v_sc = tl.load(value_cache_ptr + v_row + V_SCALE_OFF + (offs_d_v // 16)[None, :], mask=v_mask, other=0)
+            v_nib = (v_byte >> ((offs_d_v & 1) * 4).to(tl.uint8)[None, :]) & 15
+            V = _e2m1_to_f16(v_nib) * v_sc.to(tl.float8e4nv, bitcast=True).to(tl.float16)
         else:
             # K : (HEAD_SIZE_QK_PADDED, TILE_SIZE)
             K_load = tl.load(
@@ -328,10 +299,6 @@ def kernel_unified_attention_diffkv(
                 other=0.0,
             )
             V = V_load.to(Q.dtype)
-            K_lo = tl.zeros([HALF_QK_PADDED, TILE_SIZE], dtype=tl.float16)
-            K_hi = tl.zeros([HALF_QK_PADDED, TILE_SIZE], dtype=tl.float16)
-            V_lo = tl.zeros([TILE_SIZE, HALF_V_PADDED], dtype=tl.float16)
-            V_hi = tl.zeros([TILE_SIZE, HALF_V_PADDED], dtype=tl.float16)
 
         query_abs_pos = context_len + query_pos[:, None]
         seq_mask = compute_kv_seq_mask(
@@ -347,9 +314,7 @@ def kernel_unified_attention_diffkv(
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
-        if NVFP4_KV_CACHE:
-            S += scale * (tl.dot(Q_lo, K_lo) + tl.dot(Q_hi, K_hi))
-        elif FP8_KV_CACHE:
+        if FP8_KV_CACHE:
             S += (scale * k_descale) * tl.dot(Q, K)
         else:
             S += scale * tl.dot(Q, K)
@@ -368,20 +333,15 @@ def kernel_unified_attention_diffkv(
 
         M, L, P, alpha = softmax_step(S, M, L)
         acc = acc * alpha[:, None]
-        acc_lo = acc_lo * alpha[:, None]
-        acc_hi = acc_hi * alpha[:, None]
 
         if SLIDING_WINDOW:
             qpos_lo = q_block_local_idx * BLOCK_Q
-            win_ok = (context_len + qpos_lo - seq_offset[:, None]) < SLIDING_WINDOW
-            V = tl.where(win_ok, V, 0.0)
-            V_lo = tl.where(win_ok, V_lo, 0.0)
-            V_hi = tl.where(win_ok, V_hi, 0.0)
-        if NVFP4_KV_CACHE:
-            P16 = P.to(tl.float16)
-            acc_lo += tl.dot(P16, V_lo)
-            acc_hi += tl.dot(P16, V_hi)
-        elif FP8_KV_CACHE:
+            V = tl.where(
+                (context_len + qpos_lo - seq_offset[:, None]) < SLIDING_WINDOW,
+                V,
+                0.0,
+            )
+        if FP8_KV_CACHE:
             acc += tl.dot(P.to(V.dtype), V) * v_descale
         else:
             acc += tl.dot(P.to(V.dtype), V)
@@ -396,23 +356,11 @@ def kernel_unified_attention_diffkv(
             + segm_idx * HEAD_SIZE_V_PADDED
             + tl.arange(0, HEAD_SIZE_V_PADDED)[None, :]
         )
-        if NVFP4_KV_CACHE:
-            segm_half_offset = (
-                query_offset_0[:, None].to(tl.int64)
-                * (num_query_heads * NUM_SEGMENTS_PER_SEQ * HEAD_SIZE_V_PADDED)
-                + query_offset_1[:, None] * (NUM_SEGMENTS_PER_SEQ * HEAD_SIZE_V_PADDED)
-                + segm_idx * HEAD_SIZE_V_PADDED
-                + 2 * offs_h_v[None, :]
-            )
-            segm_half_mask = half_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None]
-            tl.store(segm_output_ptr + segm_half_offset, acc_lo, mask=segm_half_mask)
-            tl.store(segm_output_ptr + segm_half_offset + 1, acc_hi, mask=segm_half_mask)
-        else:
-            tl.store(
-                segm_output_ptr + segm_output_offset,
-                acc,
-                mask=dim_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
-            )
+        tl.store(
+            segm_output_ptr + segm_output_offset,
+            acc,
+            mask=dim_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
+        )
         # thor patch: with several query tokens per program, a row can see only masked keys in this
         # segment (softmax_step then leaves M=0, L=0); report -inf so reduce_segments ignores it.
         M = tl.where(L > 0.0, M, float("-inf"))
@@ -430,27 +378,17 @@ def kernel_unified_attention_diffkv(
             NUM_SEGMENTS_PER_SEQ,
         )
     else:
-        if NVFP4_KV_CACHE:
-            out_half_offset = (
-                query_offset_0[:, None] * output_stride_0
-                + query_offset_1[:, None] * output_stride_1
-                + 2 * offs_h_v[None, :]
-            )
-            out_half_mask = half_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None]
-            tl.store(output_ptr + out_half_offset, acc_lo / L[:, None], mask=out_half_mask)
-            tl.store(output_ptr + out_half_offset + 1, acc_hi / L[:, None], mask=out_half_mask)
-        else:
-            acc = acc / L[:, None]
-            output_offset = (
-                query_offset_0[:, None] * output_stride_0
-                + query_offset_1[:, None] * output_stride_1
-                + offs_d_v[None, :]
-            )
-            tl.store(
-                output_ptr + output_offset,
-                acc,
-                mask=dim_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
-            )
+        acc = acc / L[:, None]
+        output_offset = (
+            query_offset_0[:, None] * output_stride_0
+            + query_offset_1[:, None] * output_stride_1
+            + offs_d_v[None, :]
+        )
+        tl.store(
+            output_ptr + output_offset,
+            acc,
+            mask=dim_mask_v[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
+        )
 
 
 @triton.jit
@@ -659,7 +597,8 @@ def unified_attention_diffkv(
         tile_size = spec_tile
     if prefill_tile is not None and not use_3d:
         tile_size = prefill_tile
-        if (fp8_kv_cache or nvfp4) and sliding_window_val == 0:
+        # NVFP4 tiles are decoded to fp16 before the dots, so they stage like bf16 (tile 32); 64 needs 112 KB smem
+        if fp8_kv_cache and sliding_window_val == 0:
             tile_size = _PREFILL_TILE_FP8_GLOBAL
 
     grid: tuple[Any, ...]
@@ -695,8 +634,6 @@ def unified_attention_diffkv(
         K_SCALE_OFF=nv_k_scale,
         V_DATA_OFF=nv_v_data,
         V_SCALE_OFF=nv_v_scale,
-        HALF_QK_PADDED=triton.next_power_of_2(head_size_qk // 2),
-        HALF_V_PADDED=triton.next_power_of_2(head_size_v // 2),
         block_tables_ptr=block_table,
         seq_lens_ptr=seqused_k,
         alibi_slopes_ptr=alibi_slopes,

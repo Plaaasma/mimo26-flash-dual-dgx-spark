@@ -5,7 +5,7 @@ BLOCK_M 128), SWA + sinks q=8, SWA prefill + sinks. Shapes: MiMo TP2, K 192 / V 
 import itertools
 import torch
 import vllm.v1.attention.ops.triton_unified_attention_diffkv as m
-from vllm.v1.attention.ops.nvfp4_diffkv import reshape_and_cache_nvfp4_diffkv, dequant_nvfp4_cache, nvfp4_row_bytes
+from vllm.v1.attention.ops.nvfp4_diffkv import reshape_and_cache_nvfp4_diffkv, dequant_nvfp4_cache, nvfp4_row_bytes, dequant_nvfp4_blocks
 
 torch.manual_seed(0)
 dev = "cuda"; HQ, DK, DV, BS = 32, 192, 128, 16
@@ -88,4 +88,13 @@ for label, ctx, ql, hkv, win, sk, mq in cases:
     ok &= good
     print(f"{label:30s}: kernel err vs dequant ref {e_kernel:.4f} | quant err vs bf16 ref max {e_quant.max().item():.4f} "
           f"mean {e_quant.mean().item():.5f} | write err (rel amax) {w_err:.3f} {'OK' if good else 'FAIL'}")
+# prefill dequant kernel: blocks -> bf16 scratch must equal the reference dequant exactly (NVFP4 values are exact in bf16)
+kv, nv, bt, q, cu, sl = make([3000], [64], 2)
+ref = dequant_nvfp4_cache(nv, DK, DV)                      # [nb, H, BS, 320] f32
+blocks = bt.reshape(-1).to(torch.int64)
+got = dequant_nvfp4_blocks(nv, blocks, DK, DV).float()     # [n, BS, H, 320]
+exp = ref[blocks].transpose(1, 2)
+dq_ok = torch.equal(got, exp)
+ok &= dq_ok
+print(f"dequant_nvfp4_blocks vs reference: {'exact' if dq_ok else 'MISMATCH max ' + str((got - exp).abs().max().item())}")
 print("ALL OK" if ok else "SOME FAILED")
