@@ -207,7 +207,7 @@ ARGS=(
     --reasoning-parser mimo --tool-call-parser mimo --enable-auto-tool-choice
     --enable-prefix-caching
     --generation-config auto
-    --override-generation-config "{\"repetition_penalty\": ${REP_PENALTY}}"
+    --override-generation-config "{\"repetition_penalty\": ${REP_PENALTY}, \"max_new_tokens\": ${DEFAULT_MAX_TOKENS:-131072}}"
     --kv-cache-dtype "${KV_CACHE_DTYPE}"
     --max-model-len "${MAX_MODEL_LEN}" --max-num-seqs "${MAX_NUM_SEQS}" --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
     --moe-backend "${MOE_BACKEND}" --linear-backend "${LINEAR_BACKEND}"
@@ -310,7 +310,7 @@ container_env() {
     for v in SERVED_MODEL_NAME SERVED_MODEL_ALIASES PORT TP NNODES HEAD_IP MASTER_PORT MODEL_DIR \
              KV_CACHE_DTYPE KV_CACHE_MEMORY GPU_MEM_UTIL MAX_MODEL_LEN MAX_NUM_SEQS MAX_NUM_BATCHED_TOKENS \
              SPEC_METHOD DFLASH_TOKENS DFLASH_DRAFT_TP DFLASH_DYNAMIC DFLASH_KV_DTYPE MTP_TOKENS MOE_BACKEND LINEAR_BACKEND CUDAGRAPH_MODE CAPTURE_SIZES \
-             ASYNC_SCHED THINKING REP_PENALTY LANGUAGE_MODEL_ONLY LIMIT_MM MM_PROC_KWARGS SKIP_MM_PROFILING EXTRA_ARGS VLLM_API_KEY LOAD_FORMAT ENFORCE_EAGER; do
+             ASYNC_SCHED THINKING REP_PENALTY DEFAULT_MAX_TOKENS LANGUAGE_MODEL_ONLY LIMIT_MM MM_PROC_KWARGS SKIP_MM_PROFILING EXTRA_ARGS VLLM_API_KEY LOAD_FORMAT ENFORCE_EAGER; do
         common+=("$v=${!v:-}")
     done
     for v in "${common[@]}"; do out+=" -e $(printf '%q' "$v")"; done
