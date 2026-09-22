@@ -54,7 +54,7 @@ def _reshape_and_cache_nvfp4_kernel(
     k_stride0, k_stride1, v_stride0, v_stride1,
     c_stride0, c_stride1, c_stride2,
     BLOCK_SIZE: tl.constexpr,
-    NG_K: tl.constexpr, NG_V: tl.constexpr,
+    NG_K: tl.constexpr, NG_V: tl.constexpr, NG_K_PAD: tl.constexpr, NG_V_PAD: tl.constexpr,
     K_DATA_OFF: tl.constexpr, K_SCALE_OFF: tl.constexpr, V_DATA_OFF: tl.constexpr, V_SCALE_OFF: tl.constexpr,
 ):
     tok = tl.program_id(0)
@@ -67,31 +67,33 @@ def _reshape_and_cache_nvfp4_kernel(
     row = blk * c_stride0 + head * c_stride1 + off * c_stride2
     p = tl.arange(0, 8)
     # ---- K: NG_K groups of 16 elements -> 8 bytes + 1 e4m3 scale each
-    gk = tl.arange(0, NG_K)
+    gk = tl.arange(0, NG_K_PAD)
+    gk_ok = gk < NG_K
     k_src = key_ptr + tok * k_stride0 + head * k_stride1
-    k_lo = tl.load(k_src + gk[:, None] * 16 + 2 * p[None, :]).to(tl.float32)
-    k_hi = tl.load(k_src + gk[:, None] * 16 + 2 * p[None, :] + 1).to(tl.float32)
+    k_lo = tl.load(k_src + gk[:, None] * 16 + 2 * p[None, :], mask=gk_ok[:, None], other=0.0).to(tl.float32)
+    k_hi = tl.load(k_src + gk[:, None] * 16 + 2 * p[None, :] + 1, mask=gk_ok[:, None], other=0.0).to(tl.float32)
     k_amax = tl.maximum(tl.max(tl.abs(k_lo), axis=1), tl.max(tl.abs(k_hi), axis=1))
     k_s8 = tl.maximum(k_amax / 6.0, 1e-8).to(tl.float8e4nv)
     k_s = k_s8.to(tl.float32)
     k_lo_c = _e2m1_encode(k_lo / k_s[:, None])
     k_hi_c = _e2m1_encode(k_hi / k_s[:, None])
-    tl.store(cache_ptr + row + K_SCALE_OFF + gk, k_s8.to(tl.uint8, bitcast=True), mask=valid & (gk >= 0))
+    tl.store(cache_ptr + row + K_SCALE_OFF + gk, k_s8.to(tl.uint8, bitcast=True), mask=valid & gk_ok)
     tl.store(cache_ptr + row + K_DATA_OFF + gk[:, None] * 8 + p[None, :], k_lo_c | (k_hi_c << 4),
-             mask=valid & (gk[:, None] >= 0) & (p[None, :] >= 0))
+             mask=valid & gk_ok[:, None] & (p[None, :] >= 0))
     # ---- V: NG_V groups
-    gv = tl.arange(0, NG_V)
+    gv = tl.arange(0, NG_V_PAD)
+    gv_ok = gv < NG_V
     v_src = value_ptr + tok * v_stride0 + head * v_stride1
-    v_lo = tl.load(v_src + gv[:, None] * 16 + 2 * p[None, :]).to(tl.float32)
-    v_hi = tl.load(v_src + gv[:, None] * 16 + 2 * p[None, :] + 1).to(tl.float32)
+    v_lo = tl.load(v_src + gv[:, None] * 16 + 2 * p[None, :], mask=gv_ok[:, None], other=0.0).to(tl.float32)
+    v_hi = tl.load(v_src + gv[:, None] * 16 + 2 * p[None, :] + 1, mask=gv_ok[:, None], other=0.0).to(tl.float32)
     v_amax = tl.maximum(tl.max(tl.abs(v_lo), axis=1), tl.max(tl.abs(v_hi), axis=1))
     v_s8 = tl.maximum(v_amax / 6.0, 1e-8).to(tl.float8e4nv)
     v_s = v_s8.to(tl.float32)
     v_lo_c = _e2m1_encode(v_lo / v_s[:, None])
     v_hi_c = _e2m1_encode(v_hi / v_s[:, None])
-    tl.store(cache_ptr + row + V_SCALE_OFF + gv, v_s8.to(tl.uint8, bitcast=True), mask=valid & (gv >= 0))
+    tl.store(cache_ptr + row + V_SCALE_OFF + gv, v_s8.to(tl.uint8, bitcast=True), mask=valid & gv_ok)
     tl.store(cache_ptr + row + V_DATA_OFF + gv[:, None] * 8 + p[None, :], v_lo_c | (v_hi_c << 4),
-             mask=valid & (gv[:, None] >= 0) & (p[None, :] >= 0))
+             mask=valid & gv_ok[:, None] & (p[None, :] >= 0))
 
 
 def reshape_and_cache_nvfp4_diffkv(
@@ -112,6 +114,7 @@ def reshape_and_cache_nvfp4_diffkv(
         key.stride(0), key.stride(1), value.stride(0), value.stride(1),
         kv_cache.stride(0), kv_cache.stride(1), kv_cache.stride(2),
         BLOCK_SIZE=kv_cache.shape[2], NG_K=hqk // 16, NG_V=hv // 16,
+        NG_K_PAD=triton.next_power_of_2(hqk // 16), NG_V_PAD=triton.next_power_of_2(hv // 16),
         K_DATA_OFF=kd, K_SCALE_OFF=ks, V_DATA_OFF=vd, V_SCALE_OFF=vs,
         num_warps=2,
     )

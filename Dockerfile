@@ -10,7 +10,9 @@
 #   triton_attn_diffkv.py               fp8 KV enable + descales, 64 split-KV segments on full-attention groups,
 #                                       mixed-batch partition, dispatch to the custom prefill kernel
 #   triton_unified_attention_diffkv.py  split-KV for the spec-decode verify step (stock ran an 8-token verify on
-#                                       18 CTAs), BLOCK_M 128 prefill tiles, per-tensor E4M3 K/V with fp16 dots
+#                                       18 CTAs), BLOCK_M 128 prefill tiles, per-tensor E4M3 K/V with fp16 dots,
+#                                       + NVFP4 KV read path (mimo26: fp4 nibbles + e4m3 block scales decoded in-kernel)
+#   nvfp4_diffkv.py                     NVFP4 cache write kernel + layout (180 B/token/head for 192/128 vs 320 fp8)
 #   custom_all_reduce.py                VLLM_CA_MAX_SIZE_MB knob (SM12x has no entry in vLLM's table)
 # The custom prefill kernel is prebuilt here for sm_121a so the serving container never JIT-compiles.
 ARG BASE_IMAGE=vllm/vllm-openai:mimo-v26-aarch64-cu130
@@ -23,6 +25,7 @@ COPY patches/mimo_v2.py                         ${VPY}/model_executor/models/mim
 COPY patches/triton_attn_diffkv.py              ${VPY}/v1/attention/backends/triton_attn_diffkv.py
 COPY patches/triton_unified_attention_diffkv.py ${VPY}/v1/attention/ops/triton_unified_attention_diffkv.py
 COPY patches/custom_all_reduce.py               ${VPY}/distributed/device_communicators/custom_all_reduce.py
+COPY patches/nvfp4_diffkv.py                    ${VPY}/v1/attention/ops/nvfp4_diffkv.py
 RUN find ${VPY}/model_executor/models/__pycache__ ${VPY}/v1/attention/backends/__pycache__ \
          ${VPY}/v1/attention/ops/__pycache__ ${VPY}/distributed/device_communicators/__pycache__ \
          -name '*.pyc' -delete 2>/dev/null || true
