@@ -33,7 +33,8 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   concurrency), `cudagraph_mode FULL_DECODE_ONLY` (required by the patched attention builder), `--kv-cache-memory` pinned
   per rank (no probing on unified memory), `--generation-config auto` + `repetition_penalty 1.05` (agents that send no
   sampling params loop otherwise), audio tower skipped (`"audio":0`), images up to 800/request, 16 sequences with CUDA
-  graphs up to 128 tokens (16 x 8 DFlash verify tokens).
+  graphs up to 128 tokens (16 x 8 DFlash verify tokens), `--enable-prompt-tokens-details` (responses report
+  `usage.prompt_tokens_details.cached_tokens`).
 * **NVFP4 KV cache** (`--kv-cache-dtype nvfp4`, default): `patches/nvfp4_diffkv.py` writes fp4 nibbles + e4m3 scales per 16
   values (180 B/token/head vs 320 fp8); the DiffKV kernel decodes them in place for decode and spec-verify, and prefill
   on the global layers dequantizes the blocks a chunk touches once into bf16 (exact) and runs the bf16 path.
@@ -79,7 +80,8 @@ an overshoot livelocks the node (no OOM killer).
 | 16 | 233.1 | 18.0 | 0.90 s |
 
 Per stream at 1 stream by category: coding 69, structured 72, math 62, json 45, reasoning 34, prose 22, narrative 18
-(DFlash accepts 5-6 of 7 drafts on code/structured text, ~1 on prose).
+(DFlash accepts 5-6 of 7 drafts on code/structured text, ~1 on prose). The same 1-stream run on later boots the same day
+gave 39.4-40.3 tok/s per stream (with and without the dashboard telemetry); boot-to-boot spread on this bench is 40-46.
 
 Long context (unique filler document, passcode at 50% depth, NVFP4 KV): 169K tokens prefilled in 111 s (1,530 tok/s),
 338K in 325 s (1,041 tok/s), 661K in 1,002 s (660 tok/s); the passcode was recalled at every length; time spent
@@ -98,9 +100,47 @@ rank, not the network: a 64 KB all-reduce is 50-60 us), o_proj bf16 ~10%, fp8 QK
 the 48 verify tokens touch ~80% of all experts, so a step reads ~60-70 GB per rank: the bandwidth floor. The worker
 node here also runs a remote desktop (5-10% of its SMs), and TP lockstep runs both ranks at the slower one's pace.
 
+## Dashboard
+`dashboard/` is a zero-dependency live dashboard: `agent.py` on each node (`:9101`, GPU/memory/cpu/net plus any watched
+host processes), `collector.py` on the dashboard node (`:9102`, polls the vLLM metrics and both agents every 2.5 s,
+keeps 35 days of history in SQLite, receives the engine telemetry on UDP `:9103`) and `dash_server.py` (`:3000`, serves
+the page and mirrors every number on it as JSON under `/api`). Run them as systemd units with `User=` your user;
+configuration is by environment:
+
+| variable | meaning (default) |
+|---|---|
+| `SPARK_HEAD_SSH` | `user@<head fabric IP>` when the vLLM head is the other node; its container is then reached with `docker -H ssh://…` (empty: this node) |
+| `SPARK_HEAD_KITS` | serving kits that can own the head, `container:kit_dir` pairs; the running one drives the boot bar (`mimo26-head:~/mimo26/kit`) |
+| `VLLM_METRICS_URL` | `http://localhost:8888/metrics` |
+| `SPARK_AGENT_W` | the other node's agent, `http://<ip>:9101/stats` (`SPARK_AGENT_H` defaults to localhost) |
+| `SPARK_NODE_LABELS` | role labels for the two node cards, this node first (`HEAD · API,WORKER`) |
+| `SPARK_WATCH_PROCS` | agent: comma-separated command names to report, RSS + GPU memory (none) |
+| `SPARK_PROC_CAP_MIB`, `SPARK_PROC_CAP_TOTAL_MIB` | flag the node card and `/api/procs` when the watched processes pass these (none) |
+| `SPARK_DB_PATH`, `PORT`, `COLLECTOR` | history DB path (next to `collector.py`), page port (3000), collector URL |
+
+**Engine telemetry** (`MIMO26_VIZ=1` and `MIMO26_VIZ_UDP=<dashboard node>:9103` in `.env`; with `MIMO26_VIZ=0` nothing
+is patched). `overlay/patch_viz_hooks.py` installs `overlay/mimo26_viz_runtime.py` and hooks only code torch.compile never
+traces: the MoE runner right after expert selection (routed expert ids), the end of the DiffKV attention forward
+(per-head output norms), `compute_logits` (final hidden state at the sampled positions, fixed random 3-D projection),
+the model runner's per-step hook (request spans, and the device-to-host transfer) and the scheduler (KV pool and request
+snapshot). TP rank 0 records into preallocated device buffers, which is safe inside CUDA graph capture and replay; the
+transfer is queued from the step hook at up to `MIMO26_VIZ_HZ` (10), so the publisher thread never calls CUDA. Frames
+carry counts only: no token ids or text leave the engine, request ids are cut to 8 characters. A hook whose anchor moved
+is skipped with a warning instead of failing the boot (`MIMO26_VIZ_STRICT=1` to fail). Cost, A/B on the fixed prompt set
+at 1 stream: 39.9-40.3 tok/s per stream with telemetry, 39.4-40.1 without; the counting ceiling 71.3-71.8 vs 71.5-72.6.
+
+What the page shows: the model as a 48-layer tower (each token's routed experts as strands across 47 plates of 256
+experts; 32 head cells per layer, the 9 global-attention layers in gold with a context rail that grows with the longest
+live context, the 39 sliding-window layers in teal with a fixed 128-token rail; a per-layer attention-output magnitude
+spine; the DFlash drafter glowing with the tokens it got accepted), a layer x token x head volume, the final hidden
+state's trajectory, per-layer magnitude over time, the KV pool per request; in 2-D the expert-routing and per-head
+heatmaps. The rail has throughput (per-stream decode over the streams actually decoding), KV used of the engine's own
+capacity, spec-decode acceptance by draft position, a boot stage bar with MiMo's measured stage durations, and a
+memory-bandwidth estimate (experts touched per step x 6.7 MB per rank + ~5.9 GB of fixed weights + KV reads).
+
 ## Knobs worth A/B-ing (all in .env)
 `SPEC_METHOD` dflash/mtp/none, `DFLASH_TOKENS` 3..7, `VLLM_DIFFKV_*`, `MARLIN_A8`, `OPROJ_FP8`, `MAX_NUM_SEQS`,
-`MAX_NUM_BATCHED_TOKENS`, `THINKING`, `KV_CACHE_MEMORY`.
+`MAX_NUM_BATCHED_TOKENS`, `THINKING`, `KV_CACHE_MEMORY`, `MIMO26_VIZ`.
 
 ## References
 * tonyd2wild/MiMo-V2.6-Flash-2x-DGX-Spark (the 150 tok/s aggregate at C6 recipe, stock kernels, TP2 fp8 KV)

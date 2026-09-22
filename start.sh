@@ -276,9 +276,10 @@ cleanup_orphan_shm() {
 }
 retune_zram() {
     [ -n "${MIMO26_ZRAM_ALGO:-}" ] && [ -x /usr/local/sbin/glm53-zram ] || return 0
-    ( sudo -n /usr/local/sbin/glm53-zram "$MIMO26_ZRAM_ALGO" "${MIMO26_ZRAM_GIB:-10}" 2>&1 | sed 's/^/    head:   /' ) &
-    ( worker_ssh "sudo -n /usr/local/sbin/glm53-zram '$MIMO26_ZRAM_ALGO' '${MIMO26_ZRAM_GIB:-10}'" 2>&1 | sed 's/^/    worker: /' ) &
-    wait
+    local p1 p2
+    ( sudo -n /usr/local/sbin/glm53-zram "$MIMO26_ZRAM_ALGO" "${MIMO26_ZRAM_GIB:-10}" 2>&1 | sed 's/^/    head:   /' ) & p1=$!
+    ( worker_ssh "sudo -n /usr/local/sbin/glm53-zram '$MIMO26_ZRAM_ALGO' '${MIMO26_ZRAM_GIB:-10}'" 2>&1 | sed 's/^/    worker: /' ) & p2=$!
+    wait "$p1" "$p2"   # never a bare wait: the memwatch daemon is a job of this shell too
 }
 container_env() {
     # -e list shared by both ranks (printed as one string; values are trusted .env content)
@@ -304,7 +305,7 @@ container_env() {
     for v in VLLM_DIFFKV_FULL_ATTN_SEGMENTS VLLM_DIFFKV_PREFILL_BLOCK_M VLLM_DIFFKV_PREFILL_NUM_WARPS VLLM_DIFFKV_SPEC_3D_MAX_Q \
              VLLM_DIFFKV_SPEC_3D_BLOCK_M VLLM_DIFFKV_CUSTOM_PREFILL_MIN_Q VLLM_CA_MAX_SIZE_MB VLLM_ATTENTION_BACKEND \
              MIMO26_IT_LOCAL_READS MIMO26_NAN_PROBE MIMO26_PARAM_SUMS MIMO26_PAGE_UNIFY MIMO26_JSON_NOTHINK \
-             MIMO26_NVFP4_DQ_MIN_Q MIMO26_NVFP4_DQ_MAX_MB; do
+             MIMO26_NVFP4_DQ_MIN_Q MIMO26_NVFP4_DQ_MAX_MB MIMO26_VIZ MIMO26_VIZ_UDP MIMO26_VIZ_HZ MIMO26_VIZ_MAX_T MIMO26_VIZ_STRICT; do
         [ -n "${!v:-}" ] && common+=("$v=${!v}")
     done
     for v in SERVED_MODEL_NAME SERVED_MODEL_ALIASES PORT TP NNODES HEAD_IP MASTER_PORT MODEL_DIR \
@@ -320,7 +321,7 @@ launch_cluster() {
     if [ -z "$DRY_RUN" ]; then
         docker rm -f "$CONTAINER_HEAD" >/dev/null 2>&1 || true
         worker_ssh "docker rm -f '$CONTAINER_WORKER'" >/dev/null 2>&1 || true
-        cleanup_orphan_shm head & cleanup_orphan_shm worker & wait
+        local p1 p2; cleanup_orphan_shm head & p1=$!; cleanup_orphan_shm worker & p2=$!; wait "$p1" "$p2"
         retune_zram
         wait_for_headroom
     fi
@@ -370,9 +371,10 @@ reclaim_both() {
     local n="$1" why="$2"
     [ "$n" != 0 ] && [ -x /usr/local/sbin/glm53-reclaim ] || return 0
     log "$why: pushing ${n} GiB of cold pages to zram on both nodes ..."
-    ( sudo -n /usr/local/sbin/glm53-reclaim "$CONTAINER_HEAD" "$n" 2>&1 | sed 's/^/    head:   /' || warn "head reclaim failed" ) &
-    ( worker_ssh "sudo -n /usr/local/sbin/glm53-reclaim '$CONTAINER_WORKER' '$n'" 2>&1 | sed 's/^/    worker: /' || warn "worker reclaim failed" ) &
-    wait
+    local p1 p2
+    ( sudo -n /usr/local/sbin/glm53-reclaim "$CONTAINER_HEAD" "$n" 2>&1 | sed 's/^/    head:   /' || warn "head reclaim failed" ) & p1=$!
+    ( worker_ssh "sudo -n /usr/local/sbin/glm53-reclaim '$CONTAINER_WORKER' '$n'" 2>&1 | sed 's/^/    worker: /' || warn "worker reclaim failed" ) & p2=$!
+    wait "$p1" "$p2"   # a bare wait also waits on the memwatch daemon (a job of this shell) and never returns
 }
 postload_reclaim_watch() {
     local i

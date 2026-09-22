@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPARK//CONSOLE</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+  --ink:#0b0d10; --ink2:#101318; --ink3:#14181e; --line:#1e242c; --line2:#2a323d;
+  --fg:#e8ecf1; --mut:#8b95a3; --ghost:#4a5462;
+  --acc:#c8f542;            /* chartreuse — the one accent */
+  --sky:#52b7ff; --coral:#ff6e5e; --lav:#b08cff; --gold:#ffc24b;
+  --teal:#3edbb6; --pink:#ff8adb; --slate:#5c6b84;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+::selection{background:var(--acc);color:var(--ink)}
+html{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
+body{
+  background:var(--ink);color:var(--fg);
+  font:14px/1.5 'Space Grotesk',system-ui,sans-serif;
+  min-height:100vh;
+}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+
+/* ================= top bar ================= */
+#topbar{
+  display:flex;align-items:center;gap:18px;padding:0 20px;height:52px;
+  border-bottom:1px solid var(--line);background:var(--ink2);
+  position:sticky;top:0;z-index:20;flex-wrap:wrap;
+}
+#topbar .mark{font-weight:700;font-size:15px;letter-spacing:.02em;white-space:nowrap}
+#topbar .mark s{color:var(--acc);text-decoration:none}
+#modelchip{
+  font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--mut);
+  border:1px solid var(--line2);padding:3px 10px;border-radius:3px;white-space:nowrap;
+}
+#modelchip b{color:var(--fg);font-weight:600}
+#state{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;margin-left:auto}
+#state .lamp{width:10px;height:10px;border:1px solid var(--line2)}
+#state.ok .lamp{background:var(--acc);border-color:var(--acc)}
+#state.warn .lamp{background:var(--gold);border-color:var(--gold);animation:blink 1s steps(2) infinite}
+#state.bad .lamp{background:var(--coral);border-color:var(--coral)}
+#state.ok{color:var(--acc)} #state.warn{color:var(--gold)} #state.bad{color:var(--coral)}
+@keyframes blink{50%{opacity:.3}}
+#ranges{display:flex;border:1px solid var(--line2);border-radius:3px;overflow:hidden}
+#ranges button{
+  background:transparent;border:0;border-right:1px solid var(--line);color:var(--ghost);
+  font:600 11px 'IBM Plex Mono',monospace;padding:6px 9px;cursor:pointer;
+}
+#ranges button:last-child{border-right:0}
+#ranges button:hover{color:var(--fg)}
+#ranges button.on{background:var(--acc);color:var(--ink)}
+#livebtn{
+  background:transparent;border:1px solid var(--line2);border-radius:3px;color:var(--ghost);
+  font:600 11px 'IBM Plex Mono',monospace;padding:6px 12px;cursor:pointer;
+}
+#livebtn.on{color:var(--acc);border-color:var(--acc)}
+
+/* ================= frame ================= */
+#frame{display:grid;grid-template-columns:308px 1fr;min-height:calc(100vh - 52px)}
+@media(max-width:980px){#frame{grid-template-columns:1fr}}
+
+/* ================= rail ================= */
+#rail{
+  border-right:1px solid var(--line);background:var(--ink2);
+  padding:18px 18px 30px;display:flex;flex-direction:column;gap:22px;
+}
+.sec .cap{
+  font:600 10px 'IBM Plex Mono',monospace;color:var(--ghost);
+  text-transform:uppercase;letter-spacing:.18em;margin-bottom:10px;
+  display:flex;align-items:center;gap:8px;
+}
+.sec .cap::after{content:"";flex:1;height:1px;background:var(--line)}
+.bignum{display:flex;flex-direction:column;gap:14px}
+.bn .v{font:600 34px/1 'IBM Plex Mono',monospace;letter-spacing:-.03em}
+.bn .v em{font-style:normal;font-size:14px;color:var(--mut);margin-left:6px}
+.bn .k{font-size:11px;color:var(--mut);margin-top:3px}
+.bn.acc .v{color:var(--acc)}
+.mrows{display:flex;flex-direction:column}
+.mr{
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.5px;
+}
+.mr:last-child{border-bottom:0}
+.mr .k{color:var(--mut)}
+.mr .v{font-family:'IBM Plex Mono',monospace;font-weight:500;white-space:nowrap}
+.node{margin-bottom:14px}
+.node .nh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+.node .nh b{font-size:13px}
+.node .nh span{font:500 10.5px 'IBM Plex Mono',monospace;color:var(--ghost)}
+.meter{margin:5px 0}
+.meter .ml{display:flex;justify-content:space-between;font:500 10.5px 'IBM Plex Mono',monospace;color:var(--mut);margin-bottom:3px}
+.meter .tr{height:5px;background:var(--ink);border:1px solid var(--line);position:relative}
+.meter .fl{position:absolute;top:0;bottom:0;left:0;background:var(--acc);transition:width .5s}
+.meter.hot .fl{background:var(--coral)}
+.meter.mid .fl{background:var(--gold)}
+.nfoot{font:500 10.5px 'IBM Plex Mono',monospace;color:var(--ghost);margin-top:6px}
+.nfoot.alert{color:#ff6b6b;font-weight:700}
+.kvlegend{position:absolute;left:10px;bottom:10px;z-index:3;font:600 11px 'IBM Plex Mono',monospace;color:#dfe6ee;background:rgba(11,13,16,.82);border:1px solid var(--line);padding:6px 8px;pointer-events:none;max-width:70%}
+.kvlegend .row{display:flex;align-items:center;gap:7px;margin:2px 0;white-space:nowrap}
+.kvlegend .sw{width:8px;height:8px;flex:none}
+.kvlegend .bar{width:64px;height:5px;background:#1b2028;flex:none;overflow:hidden}
+.kvlegend .fill{height:100%}
+.savebox select{
+  background:var(--ink);border:1px solid var(--line2);color:var(--mut);border-radius:3px;
+  font:500 11px 'IBM Plex Mono',monospace;padding:2px 5px;cursor:pointer;
+}
+.savebox .sv{font:600 26px/1.1 'IBM Plex Mono',monospace;color:var(--acc);margin:8px 0 2px}
+.savebox .sk{font-size:11px;color:var(--mut)}
+
+/* ================= main ================= */
+#main{padding:18px 20px 40px;min-width:0}
+#boot{display:none;margin-bottom:18px;border:1px solid var(--line2);background:var(--ink2);padding:26px 28px}
+#boot.show{display:block}
+#boot .bl{font:600 10px 'IBM Plex Mono',monospace;color:var(--gold);letter-spacing:.18em;text-transform:uppercase}
+#boot h2{font-size:22px;font-weight:600;margin:6px 0 2px}
+#boot .bs{color:var(--mut);font-size:13px}
+#boot .track{height:6px;background:var(--ink);border:1px solid var(--line);margin:18px 0 8px;position:relative}
+#boot .fill{position:absolute;top:0;bottom:0;left:0;background:repeating-linear-gradient(90deg,var(--gold) 0 8px,#d9a53c 8px 16px);transition:width 1.2s}
+#boot .meta{display:flex;justify-content:space-between;font:500 11.5px 'IBM Plex Mono',monospace;color:var(--mut)}
+#boot .track .seg{position:absolute;top:-1px;bottom:-1px;width:1px;background:var(--line2)}
+#boot .stages{list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:4px 22px;font:500 11px 'IBM Plex Mono',monospace;color:var(--mut)}
+#boot .stages li{display:flex;gap:8px;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#boot .stages li .n{color:var(--ghost);width:16px;flex:none}
+#boot .stages li .d{margin-left:auto;color:var(--ghost)}
+#boot .stages li.done{color:var(--mut)} #boot .stages li.done .n{color:var(--gold)}
+#boot .stages li.current{color:#e8eef4} #boot .stages li.current .n{color:var(--gold)}
+#boot .stages li.current .d{color:var(--gold)} #boot .stages li.late .d{color:var(--coral)}
+#boot.failed .fill{background:repeating-linear-gradient(90deg,var(--coral) 0 8px,#c9503f 8px 16px)}
+#charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px}
+@media(max-width:520px){#charts{grid-template-columns:1fr}}
+.panel{border:1px solid var(--line);background:var(--ink2);min-width:0}
+.panel .ph{
+  display:flex;align-items:baseline;gap:12px;padding:9px 12px 8px;
+  border-bottom:1px solid var(--line);
+}
+.panel .ph h4{font:600 11px 'IBM Plex Mono',monospace;color:var(--mut);letter-spacing:.14em;text-transform:uppercase}
+.panel .ph .lg{display:flex;gap:12px;margin-left:auto;font-size:10.5px;color:var(--mut);flex-wrap:wrap;justify-content:flex-end}
+.lg i{display:inline-block;width:10px;height:3px;margin-right:5px;vertical-align:3px}
+canvas.cv{width:100%;height:168px;display:block;cursor:crosshair;touch-action:none}
+#tip{
+  position:fixed;display:none;z-index:30;pointer-events:none;min-width:150px;
+  background:var(--ink3);border:1px solid var(--line2);padding:8px 11px;
+  font:500 11px 'IBM Plex Mono',monospace;box-shadow:6px 6px 0 #0007;
+}
+#tip .th{color:var(--ghost);margin-bottom:5px}
+#tip .tr2{display:flex;justify-content:space-between;gap:16px}
+footer{padding:26px 0 8px;text-align:center;font:500 10.5px 'IBM Plex Mono',monospace;color:var(--ghost);letter-spacing:.06em}
+/* ================= ambient (live activations) ================= */
+#ambient{margin:18px 0 6px}
+#ambient .ah{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+#ambient .ah h3{font:600 11px 'IBM Plex Mono',monospace;color:var(--mut);letter-spacing:.18em;text-transform:uppercase}
+#ambient .ah .st{font:500 10.5px 'IBM Plex Mono',monospace;color:var(--ghost)}
+#ambient .ah .st.on{color:var(--acc)}
+#ambient .ah button{margin-left:auto;background:transparent;border:1px solid var(--line2);color:var(--ghost);font:600 10.5px 'IBM Plex Mono',monospace;padding:5px 10px;cursor:pointer;border-radius:3px}
+#ambient .ah button:hover{color:var(--fg)}
+#agrid{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+@media(max-width:1100px){#agrid{grid-template-columns:1fr}}
+.apanel{border:1px solid var(--line);background:var(--ink2);min-width:0;position:relative}
+.apanel .ph{display:flex;align-items:baseline;gap:12px;padding:9px 12px 8px;border-bottom:1px solid var(--line)}
+.apanel .ph h4{font:600 11px 'IBM Plex Mono',monospace;color:var(--mut);letter-spacing:.14em;text-transform:uppercase}
+.apanel .ph .sub{margin-left:auto;font:500 10.5px 'IBM Plex Mono',monospace;color:var(--ghost)}
+.apanel canvas{width:100%;display:block}
+#cv_brain{height:300px} #cv_scan{height:300px} #cv_ribbon{height:150px} #cv_kv{height:150px} #cv_gauge{height:150px}
+body.ambient #topbar,body.ambient #rail,body.ambient #charts,body.ambient footer,body.ambient #boot{display:none!important}
+body.ambient #frame{grid-template-columns:1fr}
+body.ambient #main{padding:14px}
+body.ambient #agrid{grid-template-columns:2fr 1fr;grid-auto-rows:minmax(0,1fr);height:calc(100vh - 70px)}
+body.ambient .apanel{display:flex;flex-direction:column}
+body.ambient .apanel canvas{flex:1;height:auto!important;min-height:0}
+#agrid3d{display:grid;grid-template-columns:2fr 1fr 1fr;grid-template-rows:330px 300px;gap:14px}
+#agrid3d .cortex{grid-row:1 / 3}
+#agrid3d canvas{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#agrid3d .apanel{display:flex;flex-direction:column;min-height:0}
+#agrid3d .apanel canvas{flex:1;min-height:0}
+@media(max-width:1100px){#agrid3d{grid-template-columns:1fr 1fr;grid-template-rows:320px 260px 260px}#agrid3d .cortex{grid-column:1 / -1;grid-row:1}}
+#agrid[hidden],#agrid3d[hidden]{display:none!important}
+#gaugestrip{margin-top:14px}
+#gaugestrip canvas{height:150px}
+body.ambient #agrid3d{height:calc(100vh - 250px);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+body.ambient #gaugestrip .apanel{display:block}
+body.ambient #gaugestrip canvas{height:120px!important;flex:none}
+#ambient .ah .mode{background:transparent;border:1px solid var(--line2);color:var(--ghost);font:600 10.5px 'IBM Plex Mono',monospace;padding:5px 10px;cursor:pointer;border-radius:3px;margin-left:auto}
+#ambient .ah .mode.on{color:var(--acc);border-color:var(--acc)}
+#ambient .ah button#ambient_btn{margin-left:8px}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="mark">SPARK<s>//</s>CONSOLE</div>
+  <div id="modelchip" class="mono">model <b id="mname">—</b></div>
+  <div id="state" class="bad"><span class="lamp"></span><span id="stext">CONNECTING</span></div>
+  <div id="ranges"></div>
+  <button id="livebtn" class="on">LIVE ▸</button>
+</div>
+
+<div id="frame">
+  <aside id="rail">
+    <div class="sec">
+      <div class="cap">throughput</div>
+      <div class="bignum">
+        <div class="bn acc"><div class="v mono"><span id="r_gen">—</span><em>tok/s out</em></div><div class="k">generation · <span id="r_genper">—</span> per stream<span id="r_pre"></span></div></div>
+        <div class="bn"><div class="v mono"><span id="r_pp">—</span><em>tok/s in</em></div><div class="k">prefill</div></div>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="cap">engine</div>
+      <div class="mrows">
+        <div class="mr"><span class="k">spec accept</span><span class="v" id="r_acc">—</span></div>
+        <div class="mr"><span class="k">accept length</span><span class="v" id="r_tau">—</span></div>
+        <div class="mr"><span class="k">kv cache</span><span class="v" id="r_kv">—</span></div>
+        <div class="mr" id="rw_row"><span class="k">run / wait</span><span class="v" id="r_rw">—</span></div>
+        <div class="mr"><span class="k">steps/s · tok/step</span><span class="v" id="r_steps">—</span></div>
+        <div class="mr"><span class="k">ttft p50 · p99</span><span class="v" id="r_ttft">—</span></div>
+        <div class="mr"><span class="k">itl p50 · p99</span><span class="v" id="r_itl">—</span></div>
+        <div class="mr"><span class="k">queue p50 · p99</span><span class="v" id="r_q">—</span></div>
+        <div class="mr"><span class="k">prompt cached</span><span class="v" id="r_cached">—</span></div>
+        <div class="mr"><span class="k">est. compute</span><span class="v" id="r_tflops">—</span></div>
+        <div class="mr"><span class="k">req ok · preempt</span><span class="v" id="r_req">—</span></div>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="cap">nodes</div>
+      <div class="node" id="node_h">
+        <div class="nh"><b id="nn_h">node A</b><span id="nr_h">HEAD · API</span></div>
+        <div class="meter" id="m_h_gpu"><div class="ml"><span>gpu</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="meter" id="m_h_mem"><div class="ml"><span>memory</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="meter" id="m_h_tmp"><div class="ml"><span>temp</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="nfoot" id="i_h">—</div>
+      </div>
+      <div class="node" id="node_w">
+        <div class="nh"><b id="nn_w">node B</b><span id="nr_w">WORKER</span></div>
+        <div class="meter" id="m_w_gpu"><div class="ml"><span>gpu</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="meter" id="m_w_mem"><div class="ml"><span>memory</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="meter" id="m_w_tmp"><div class="ml"><span>temp</span><span class="mv">—</span></div><div class="tr"><div class="fl"></div></div></div>
+        <div class="nfoot" id="i_w">—</div>
+      </div>
+    </div>
+    <div class="sec savebox">
+      <div class="cap">lifetime</div>
+      <div class="mrows">
+        <div class="mr"><span class="k">tokens in</span><span class="v" id="t_in">—</span></div>
+        <div class="mr"><span class="k">tokens out</span><span class="v" id="t_out">—</span></div>
+      </div>
+      <div class="sv" id="t_saved">—</div>
+      <div class="sk">saved vs
+        <select id="apiSel">
+          <option value="mimo26">MiMo V2.6 Flash</option>
+          <option value="glm53">GLM 5.3 Flash</option>
+          <option value="terra">GPT 5.6 Terra</option>
+          <option value="opus">Claude Opus 4.8</option>
+        </select> list price
+      </div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="boot">
+      <div class="bl">startup sequence</div>
+      <h2 id="b_stage">—</h2>
+      <div class="bs" id="b_sub"></div>
+      <div class="track" id="b_track"><div class="fill" id="b_fill" style="width:0%"></div></div>
+      <div class="meta"><span id="b_elapsed"></span><span id="b_pct"></span><span id="b_eta"></span></div>
+      <ol class="stages" id="b_stages"></ol>
+    </div>
+    <div id="ambient">
+      <div class="ah"><h3>live activations</h3><span class="st" id="viz_state">waiting for engine telemetry</span><button class="mode on" id="mode_btn">3D</button><button id="ambient_btn">AMBIENT ▸</button></div>
+      <div id="agrid3d">
+        <div class="apanel cortex"><div class="ph"><h4>cortex — mimo-v2.6-flash: 48 layers · 9 global + 39 swa · 47 moe × 256 · dflash</h4><span class="sub" id="cx_sub">drag to orbit · right-drag to pan · wheel to zoom · double-click to reset</span></div><canvas id="cv3_cortex"></canvas></div>
+        <div class="apanel"><div class="ph"><h4>attention heads — layer × token × head</h4><span class="sub" id="av_sub">—</span></div><canvas id="cv3_attn"></canvas></div>
+        <div class="apanel"><div class="ph"><h4>activation space — final hidden state → 3-d</h4><span class="sub" id="as_sub">—</span></div><canvas id="cv3_space"></canvas></div>
+        <div class="apanel"><div class="ph"><h4>attention terrain — layer × time × output magnitude</h4><span class="sub" id="rt_sub">—</span></div><canvas id="cv3_terrain"></canvas></div>
+        <div class="apanel"><div class="ph"><h4 id="kv3_title">kv pool — requests × blocks</h4><span class="sub" id="kv3_sub">—</span></div><canvas id="cv3_kv"></canvas><div id="kv3_legend" class="kvlegend" hidden></div></div>
+      </div>
+      <div id="agrid" hidden>
+        <div class="apanel"><div class="ph"><h4>expert routing — 47 moe layers × 256 experts, top-8</h4><span class="sub" id="brain_sub">—</span></div><canvas id="cv_brain"></canvas></div>
+        <div class="apanel"><div class="ph"><h4>attention heads — output magnitude, 48 layers × 32 heads</h4><span class="sub" id="scan_sub">—</span></div><canvas id="cv_scan"></canvas></div>
+        <div class="apanel"><div class="ph"><h4>attention output — per-layer magnitude over time</h4><span class="sub" id="ribbon_sub">—</span></div><canvas id="cv_ribbon"></canvas></div>
+        <div class="apanel"><div class="ph"><h4 id="kv_title">kv pool</h4><span class="sub" id="kv_sub">—</span></div><canvas id="cv_kv"></canvas></div>
+      </div>
+      <div id="gaugestrip"><div class="apanel"><div class="ph"><h4>reactor — bandwidth · power · thermals · clocks</h4><span class="sub" id="gauge_sub">—</span></div><canvas id="cv_gauge"></canvas></div></div>
+    </div>
+    <div id="charts"></div>
+    <footer>spark//console · collector :9102 · agents :9101 · drag pan · wheel zoom · double-click reset</footer>
+  </main>
+</div>
+<div id="tip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+const API = new URLSearchParams(location.search).get("api") || (location.port === "3000" ? "/api" : `${location.protocol}//${location.hostname}:9102`);   // same port serves the page and the JSON API
+const $ = id => document.getElementById(id);
+const C = {acc:"#c8f542", sky:"#52b7ff", coral:"#ff6e5e", lav:"#b08cff",
+           gold:"#ffc24b", teal:"#3edbb6", pink:"#ff8adb", slate:"#5c6b84"};
+
+const fmtN = v => v==null?"—" : Math.abs(v)>=10000?(v/1000).toFixed(1)+"k" : Math.abs(v)>=100?Math.round(v)+"" : (+v).toFixed(1);
+const fmtS = v => v==null?"—" : v>=90?Math.floor(v/60)+"m"+String(Math.round(v%60)).padStart(2,"0")+"s" : v>=10?v.toFixed(0)+"s" : v>=1?v.toFixed(2)+"s" : Math.round(v*1000)+"ms";
+const fmtTok = v => v==null?"—" : v>=1e9?(v/1e9).toFixed(2)+"B" : v>=1e6?(v/1e6).toFixed(1)+"M" : v>=1e3?(v/1e3).toFixed(1)+"k" : Math.round(v)+"";
+
+/* ---------------- panels ---------------- */
+const PANELS = [
+ {id:"thru", t:"throughput — tok/s", series:[
+   {col:"gen", n:"generate", c:C.acc, w:2, fill:1, band:1},
+   {col:"gen_per", n:"per-stream", c:C.gold, w:1.5, dash:[4,3]},
+   {col:"pp",  n:"prefill",  c:C.sky, w:1.5, band:1, axis:"r"}]},
+ {id:"spec", t:"speculative decode", series:[
+   {col:"accpct", n:"accept %", c:C.teal, w:2, fill:1},
+   {col:"draftrate", n:"drafted tok/s", c:C.slate, dash:[3,3]}]},
+ {id:"pos", t:"acceptance by draft position", bars:true},
+ {id:"lat", t:"latency", fmt:fmtS, series:[
+   {col:"ttft50", n:"ttft p50", c:C.sky, w:2}, {col:"ttft99", n:"ttft p99", c:C.sky, dash:[3,3]},
+   {col:"itl50", n:"itl p50", c:C.teal, w:2}, {col:"itl99", n:"itl p99", c:C.teal, dash:[3,3]},
+   {col:"q50", n:"queue p50", c:C.pink, w:1.5}, {col:"q99", n:"queue p99", c:C.pink, dash:[3,3]}]},
+ {id:"cache", t:"kv & caches — %", max:100, series:[
+   {col:"kv", n:"kv used", c:C.gold, w:2, fill:1},
+   {col:"pfx", n:"prefix hit", c:C.lav, w:1.5},
+   {col:"cachedpct", n:"prompt cached", c:C.teal, dash:[3,3]}]},
+ {id:"reqs", t:"requests", floorMax:4, fmt:v=>v==null?"—":(Math.round(v)+""), series:[
+   {col:"run", n:"running", c:C.acc, w:2, fill:1},
+   {col:"wait_cap", n:"wait·capacity", c:C.gold, w:1.5},
+   {col:"wait_def", n:"wait·deferred", c:C.lav, w:1.5}]},
+ {id:"engine", t:"engine steps", series:[
+   {col:"steps", n:"steps/s", c:C.sky, w:2},
+   {col:"stepsz", n:"tok/step", c:C.gold, dash:[3,3]},
+   {col:"tflops", n:"est. TF/s", c:C.teal, dash:[1,3]}]},
+ {id:"gpu", t:"gpu utilization — %", max:100, series:[
+   {col:"h_gpu", n:"head", c:C.acc, w:2, fill:1},
+   {col:"w_gpu", n:"worker", c:C.coral, w:2, fill:1}]},
+ {id:"thermal", t:"thermals", series:[
+   {col:"h_temp", n:"head °C", c:C.acc, w:2, band:1},
+   {col:"w_temp", n:"worker °C", c:C.coral, w:2, band:1},
+   {col:"h_power", n:"head W", c:C.slate, dash:[3,3]},
+   {col:"w_power", n:"worker W", c:C.pink, dash:[3,3]}]},
+ {id:"mem", t:"unified memory — GiB", max:121.7, fmt:v=>v==null?"—":(+v).toFixed(1), series:[
+   {col:"h_mem", n:"head", c:C.acc, w:2, fill:1},
+   {col:"w_mem", n:"worker", c:C.coral, w:2, fill:1}]},
+ {id:"net", t:"network — MB/s", series:[
+   {col:"h_net", n:"head", c:C.acc, w:1.5, fill:1},
+   {col:"w_net", n:"worker", c:C.coral, w:1.5, fill:1}]},
+ {id:"cpu", t:"cpu — %", max:100, series:[
+   {col:"h_cpu", n:"head", c:C.acc, w:1.5},
+   {col:"w_cpu", n:"worker", c:C.coral, w:1.5}]},
+];
+
+for (const p of PANELS){
+  const el = document.createElement("div");
+  el.className = "panel";
+  const hasR = p.series && p.series.some(s=>s.axis==="r");
+  const lg = p.series ? p.series.map(s=>`<span><i style="background:${s.c}"></i>${hasR?(s.axis==="r"?s.n+" \u25b8":"\u25c2 "+s.n):s.n}</span>`).join("") : "";
+  el.innerHTML = `<div class="ph"><h4>${p.t}</h4><div class="lg">${lg}</div></div><canvas class="cv" id="cv_${p.id}"></canvas>`;
+  $("charts").appendChild(el);
+}
+
+/* ---------------- view state ---------------- */
+const view = {span:900e3, t1:Date.now(), live:true};
+let H = null, LIVE = null, TOTALS = null;
+const RANGES = [["5m",300],["15m",900],["30m",1800],["1h",3600],["4h",14400],["12h",43200],["24h",86400],["1w",604800],["1M",2592000]];
+for (const [lab,s] of RANGES){
+  const b = document.createElement("button");
+  b.textContent = lab; b.dataset.s = s;
+  if (s===900) b.className = "on";
+  b.onclick = () => {
+    document.querySelectorAll("#ranges button").forEach(x=>x.className="");
+    b.className = "on"; view.span = s*1000; setLive(true);
+  };
+  $("ranges").appendChild(b);
+}
+function setLive(on){ view.live = on; $("livebtn").className = on?"on":""; if(on){view.t1 = Date.now(); fetchHist();} }
+$("livebtn").onclick = () => setLive(true);
+
+/* ---------------- data ---------------- */
+let fetching = false, refetch = false;
+async function fetchHist(){
+  if (fetching){ refetch = true; return; }
+  fetching = true;
+  try{
+    const r = await fetch(`${API}/history?from=${(view.t1-view.span)/1000}&to=${view.t1/1000}&points=520`, {cache:"no-store"});
+    H = await r.json();
+    // per-stream decode = aggregate generate / running requests, per bucket
+    H.gen_per = (H.t||[]).map((_,i)=>{ const d = (H.dec && H.dec[i] != null) ? H.dec[i] : (H.run ? H.run[i] : null); return (d > 0 && H.gen && H.gen[i] != null) ? H.gen[i]/d : null; });   // decoding streams only; a prefilling request generates nothing
+    drawAll();
+  }catch(e){}
+  fetching = false;
+  if (refetch){ refetch = false; fetchHist(); }
+}
+async function fetchLive(){
+  try{
+    const r = await fetch(`${API}/live`, {cache:"no-store"});
+    LIVE = await r.json();
+  }catch(e){ LIVE = null; }
+  renderRail(); drawBarsPanel();
+}
+async function fetchTotals(){
+  try{ TOTALS = await (await fetch(`${API}/totals`, {cache:"no-store"})).json(); }catch(e){}
+  renderSaved();
+}
+
+/* ---------------- rail ---------------- */
+const PRICES = {
+  mimo26:{in:0.14, out:0.28}, glm53:{in:0.15, out:0.50}, terra:{in:2.00, out:12.00}, opus:{in:5.00, out:25.00},
+};
+function renderSaved(){
+  if (!TOTALS) return;
+  $("t_in").textContent = fmtTok(TOTALS.input_tokens);
+  $("t_out").textContent = fmtTok(TOTALS.output_tokens);
+  const p = PRICES[$("apiSel").value] || PRICES.mimo26;
+  const usd = TOTALS.input_tokens/1e6*p.in + TOTALS.output_tokens/1e6*p.out;
+  $("t_saved").textContent = "$" + usd.toLocaleString(undefined,{maximumFractionDigits:2});
+}
+$("apiSel").addEventListener("change", renderSaved);
+
+function renderRail(){
+  const d = LIVE;
+  const st = $("state");
+  if (!d){ st.className="bad"; $("stext").textContent="COLLECTOR OFFLINE"; return; }
+  const boot = d.boot;
+  const starting = !d.engine_up && boot && boot.stage !== "server stopped";
+  st.className = d.engine_up ? "ok" : starting ? "warn" : "bad";
+  $("stext").textContent = d.engine_up ? "SERVING" : starting ? "STARTING" : "OFFLINE";
+  if (d.model) $("mname").textContent = d.model;
+  const bootEl = $("boot");
+  if (!d.engine_up && boot){
+    bootEl.className = "show" + (boot.failed ? " failed" : "");
+    const stages = boot.stages || [], total = stages.reduce((a,s)=>a+s.typ_s, 0) || 1;
+    $("b_stage").textContent = boot.stage_idx ? `${boot.stage_idx}/${boot.n_stages} · ${boot.stage}` : boot.stage;
+    $("b_fill").style.width = (boot.failed ? 100 : (boot.pct||0))+"%";
+    $("b_pct").textContent = boot.failed ? "failed" : (boot.pct||0)+"%";
+    $("b_elapsed").textContent = boot.elapsed_s!=null ? "elapsed "+fmtS(boot.elapsed_s) : "";
+    $("b_eta").textContent = boot.eta_s!=null ? (boot.late ? "this stage is running long · " : "") + "≈ "+fmtS(boot.eta_s)+" remaining" : "";
+    const kit = (d.kit || "the kit").split("/").slice(-2).join("/");
+    $("b_sub").textContent = boot.stage_key==="stopped" ? `No server container found — start it with ${kit}/start.sh.`
+      : boot.failed ? (boot.note || `start.sh reported a failed boot — see ${kit}/logs/`)
+      : boot.stage_key==="teardown" ? "start.sh is tearing down the old containers and shipping the kit to the worker."
+      : `stage ${boot.stage_elapsed_s!=null ? fmtS(boot.stage_elapsed_s) : "—"} of a typical ${fmtS(boot.stage_typ_s||0)} · progress is weighted by each stage's usual duration, measured over the last five boots`;
+    // stage boundaries on the track + the stage list
+    const track = $("b_track"); track.querySelectorAll(".seg").forEach(e=>e.remove());
+    let acc = 0; stages.slice(0,-1).forEach(s=>{ acc += s.typ_s; const seg = document.createElement("div"); seg.className="seg"; seg.style.left = (acc/total*100)+"%"; track.appendChild(seg); });
+    const ol = $("b_stages"); ol.replaceChildren();
+    stages.forEach((s,i)=>{ const li = document.createElement("li"); li.className = s.state + (s.state==="current" && boot.late ? " late" : "");
+      const n = document.createElement("span"); n.className="n"; n.textContent = s.state==="done" ? "✓" : s.state==="current" ? "▶" : String(i+1);
+      const lab = document.createElement("span"); lab.textContent = s.label;
+      const dd = document.createElement("span"); dd.className="d"; dd.textContent = s.state==="done" ? fmtS(s.took_s) : s.state==="current" ? `${fmtS(s.elapsed_s)} / ~${fmtS(s.typ_s)}` : `~${fmtS(s.typ_s)}`;
+      li.append(n, lab, dd); ol.appendChild(li); });
+  } else bootEl.className = "";
+
+  const r = d.row || {};
+  const put = (id,v,f) => $(id).textContent = v==null?"—":f(v);
+  put("r_gen", r.gen, v=>v.toFixed(1));
+  { const dec = (r.dec != null) ? r.dec : r.run, pre = (r.dec != null && r.run != null) ? Math.max(0, r.run - r.dec) : 0;
+    $("r_genper").textContent = (dec > 0 && r.gen != null) ? (r.gen / dec).toFixed(1) + " tok/s" : "—";
+    $("r_pre").textContent = pre ? ` · ${pre} prefilling` : ""; }
+  put("r_pp", r.pp, v=>Math.round(v)+"");
+  put("r_acc", r.accpct, v=>v.toFixed(1)+"%");
+  put("r_tau", r.tau, v=>v.toFixed(2)+" tok");
+  { const tot = d.kv_total_tokens, used = (r.kv!=null && tot) ? r.kv/100*tot : null;   // engine's real capacity, all cache groups
+    $("r_kv").textContent = r.kv==null ? "—" : tot ? `${fmtTok(used)} / ${fmtTok(tot)} · ${r.kv.toFixed(1)}%` : r.kv.toFixed(1)+"%"; }
+  $("r_rw").textContent = `${r.run??"—"} / ${r.wait??"—"}`;
+  $("rw_row").title = `waiting: ${r.wait_cap??0} capacity · ${r.wait_def??0} deferred`;
+  $("r_steps").textContent = r.steps!=null ? `${r.steps.toFixed(1)} · ${r.stepsz!=null?r.stepsz.toFixed(1):"—"}` : "—";
+  $("r_ttft").textContent = r.ttft50!=null ? fmtS(r.ttft50)+" · "+fmtS(r.ttft99) : "idle";
+  $("r_itl").textContent = r.itl50!=null ? fmtS(r.itl50)+" · "+fmtS(r.itl99) : "idle";
+  $("r_q").textContent = r.q50!=null ? fmtS(r.q50)+" · "+fmtS(r.q99) : "idle";
+  put("r_cached", r.cachedpct, v=>Math.round(v)+"%");
+  put("r_tflops", r.tflops, v=>v.toFixed(1)+" TF/s");
+  $("r_req").textContent = `${r.req_ok??"—"} · ${r.preempt??"—"}`;
+
+  for (const k of ["h","w"]){
+    const n = (d.nodes||{})[k];
+    if (!n) continue;
+    meter(`m_${k}_gpu`, n.gpu.util, 100, v=>Math.round(v)+"%", 101, 85);
+    meter(`m_${k}_mem`, n.mem.used_gib, n.mem.total_gib||121.6, v=>v.toFixed(1)+"G", 120.9, 120.0);
+    meter(`m_${k}_tmp`, n.gpu.temp, 95, v=>Math.round(v)+"°", 82, 74);
+    if (n.host) $(`nn_${k}`).textContent = n.host;                                   // hostname reported by the node agent
+    { const labels = d.node_labels || [], li = k === "h" ? 0 : 1; if (labels[li]) $(`nr_${k}`).textContent = labels[li]; }
+    // watched host processes (agent SPARK_WATCH_PROCS): RSS + GPU memory, MiB; over-cap when their sum passes proc_cap_mib
+    const procs = n.procs || {}, cap = d.proc_cap_mib || 0, ptot = Object.values(procs).reduce((a,b)=>a+(b||0),0), over = cap > 0 && ptot > cap;
+    const ptxt = Object.entries(procs).map(([nm,mib]) => ` · ${nm} ${(mib/1024).toFixed(2)} GB`).join("") + (over ? ` ⚠ OVER ${(cap/1024).toFixed(0)} GB CAP` : "");
+    $(`i_${k}`).textContent =
+      `${Math.round(n.gpu.power??0)} W · ${r[k+"_net"]!=null?fmtN(r[k+"_net"]):"—"} MB/s · cpu ${Math.round(n.cpu_pct??0)}%` + ptxt;
+    $(`i_${k}`).classList.toggle("alert", over);
+  }
+}
+function meter(id, v, max, f, hot, mid){
+  const el = $(id); if (v==null) return;
+  const fr = Math.max(0, Math.min(1, v/max));
+  el.querySelector(".fl").style.width = (fr*100)+"%";
+  el.querySelector(".mv").textContent = f(v);
+  el.className = "meter" + (v>=hot?" hot":v>=mid?" mid":"");
+}
+
+/* ---------------- charts ---------------- */
+function niceTicks(t0,t1){
+  const steps=[60,300,900,1800,3600,10800,21600,43200,86400,259200,604800,2592000].map(s=>s*1000);
+  const st = steps.find(s=>(t1-t0)/s<=6) || steps[steps.length-1];
+  const out=[]; for(let t=Math.ceil(t0/st)*st;t<=t1;t+=st) out.push(t);
+  return out;
+}
+const PL=46, PR=8, PT=8, PB=20;
+function autoY(p, series){
+  // Spike-aware: a cache-hit prefill burst can register 50k+ tok/s for one
+  // bucket; scaling to it squashes everything. Scale to the 98th percentile
+  // when the max is a lone outlier; the clip rect crops what overflows.
+  const vals=[]; let lo=Infinity, hi=-Infinity, bandHi=-Infinity;
+  for (const s of series||p.series||[]){
+    const a=H[s.col]||[], mx=H[s.col+"_mx"], mn=H[s.col+"_mn"];
+    for (let i=0;i<a.length;i++){
+      const v=a[i]; if(v==null)continue;
+      vals.push(v);
+      if(v>hi)hi=v; if(v<lo)lo=v;
+      if(mx&&mx[i]!=null&&mx[i]>bandHi)bandHi=mx[i];
+      if(mn&&mn[i]!=null&&mn[i]<lo)lo=mn[i];
+    }
+  }
+  if (!vals.length) return [0,1];
+  vals.sort((a,b)=>a-b);
+  const p98=vals[Math.min(vals.length-1,Math.floor(vals.length*0.98))];
+  if (p98>0 && hi>2.5*p98) hi=p98*1.35;
+  if (isFinite(bandHi)) hi=Math.max(hi, Math.min(bandHi, hi*1.6));
+  if (p.floorMax!=null) hi=Math.max(hi, p.floorMax);
+  if (lo>0 && lo<hi*0.35) lo=0;
+  if (lo>=hi){lo=Math.max(0,hi-1);hi=hi+1;}
+  const pad=(hi-lo)*0.08;
+  return [Math.max(0, lo-(lo===0?0:pad)), p.max!=null?Math.min(p.max,hi+pad):hi+pad];
+}
+function drawPanel(p){
+  const cv = $("cv_"+p.id), ctx = cv.getContext("2d");
+  const dpr = devicePixelRatio||1, W = cv.clientWidth, Hh = cv.clientHeight;
+  if (!W) return;
+  if (cv.width !== Math.round(W*dpr)){ cv.width=Math.round(W*dpr); cv.height=Math.round(Hh*dpr); }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,Hh);
+  if (!H || !H.t || !H.t.length) return;
+  const t0 = view.t1-view.span, t1 = view.t1;
+  const lseries = (p.series||[]).filter(s=>s.axis!=="r");
+  const rseries = (p.series||[]).filter(s=>s.axis==="r");
+  const pr = rseries.length ? 46 : PR;
+  p._pr = pr;
+  const [y0,y1] = autoY(p, lseries);
+  const [ry0,ry1] = rseries.length ? autoY(p, rseries) : [0,1];
+  const X = t => PL + (W-PL-pr)*(t*1000-t0)/(t1-t0);
+  const Yl = v => PT + (Hh-PT-PB)*(1-(v-y0)/(y1-y0||1));
+  const Yr = v => PT + (Hh-PT-PB)*(1-(v-ry0)/(ry1-ry0||1));
+  // grid + axes; with a right axis, tick labels take their series' color
+  ctx.strokeStyle="#1a2028"; ctx.lineWidth=1; ctx.font="500 9.5px 'IBM Plex Mono'";
+  for (let i=0;i<=3;i++){
+    const y = PT + (Hh-PT-PB)*(1-i/3);
+    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(W-pr,y); ctx.stroke();
+    ctx.fillStyle = rseries.length && lseries.length ? lseries[0].c+"cc" : "#4a5462";
+    ctx.textAlign="right"; ctx.fillText((p.fmt||fmtN)(y0+(y1-y0)*i/3), PL-5, y+3);
+    if (rseries.length){
+      ctx.fillStyle = rseries[0].c+"cc"; ctx.textAlign="left";
+      ctx.fillText((p.fmt||fmtN)(ry0+(ry1-ry0)*i/3), W-pr+5, y+3);
+    }
+  }
+  ctx.fillStyle="#4a5462";
+  for (const t of niceTicks(t0,t1)){
+    const x=PL+(W-PL-pr)*(t-t0)/(t1-t0);
+    ctx.textAlign="center";
+    const d=new Date(t);
+    ctx.fillText(view.span>86400e3 ? `${d.getMonth()+1}/${d.getDate()}` :
+      `${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`, x, Hh-6);
+  }
+  // series (clipped to the plot area so off-scale spikes crop cleanly)
+  ctx.save(); ctx.beginPath(); ctx.rect(PL,PT,W-PL-pr,Hh-PT-PB); ctx.clip();
+  for (const s of (p.series||[])){
+    const a=H[s.col]||[];
+    const Y = s.axis==="r" ? Yr : Yl;
+    const sy0 = s.axis==="r" ? ry0 : y0, sy1 = s.axis==="r" ? ry1 : y1;
+    // min-max band
+    if (s.band && H[s.col+"_mx"] && H[s.col+"_mn"]){
+      ctx.beginPath(); let started=false;
+      for(let i=0;i<H.t.length;i++){const v=H[s.col+"_mx"][i];if(v==null)continue;const x=X(H.t[i]),y=Y(Math.min(v,sy1));started?ctx.lineTo(x,y):ctx.moveTo(x,y);started=true;}
+      for(let i=H.t.length-1;i>=0;i--){const v=H[s.col+"_mn"][i];if(v==null)continue;ctx.lineTo(X(H.t[i]),Y(Math.max(v,sy0)));}
+      if(started){ctx.closePath(); ctx.fillStyle=s.c+"1f"; ctx.fill();}
+    }
+    // area fill
+    if (s.fill){
+      ctx.beginPath(); let st2=false, firstX=null, lastX=null;
+      for(let i=0;i<H.t.length;i++){const v=a[i];if(v==null)continue;const x=X(H.t[i]);st2?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));if(!st2)firstX=x;st2=true;lastX=x;}
+      if(st2){ctx.lineTo(lastX,Y(sy0));ctx.lineTo(firstX,Y(sy0));ctx.closePath();
+        const g=ctx.createLinearGradient(0,PT,0,Hh-PB);g.addColorStop(0,s.c+"30");g.addColorStop(1,s.c+"05");ctx.fillStyle=g;ctx.fill();}
+    }
+    // line
+    ctx.beginPath(); ctx.strokeStyle=s.c; ctx.lineWidth=s.w||1.25;
+    ctx.setLineDash(s.dash||[]);
+    let started=false;
+    for(let i=0;i<H.t.length;i++){const v=a[i];if(v==null){started=false;continue}const x=X(H.t[i]),y=Y(v);started?ctx.lineTo(x,y):ctx.moveTo(x,y);started=true;}
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+/* bars: acceptance by draft position, drafter-adaptive */
+function drawBarsPanel(){
+  const cv=$("cv_pos"); if(!cv)return;
+  const ctx=cv.getContext("2d");
+  const dpr=devicePixelRatio||1, W=cv.clientWidth, Hh=cv.clientHeight;
+  if(!W)return;
+  if(cv.width!==Math.round(W*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(Hh*dpr);}
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,Hh);
+  const r=(LIVE&&LIVE.row)||{};
+  const all=[0,1,2,3,4,5,6].map(i=>r["pos"+i]);
+  let hi=-1; all.forEach((v,i)=>{if(v!=null&&v>0)hi=i;});
+  if(hi>=0)drawBarsPanel._n=Math.max(drawBarsPanel._n===7?7:hi+1, hi+1);
+  const n=drawBarsPanel._n||3, vals=all.slice(0,n);
+  const ih=Hh-40;
+  const bw=Math.min(90,(W-70)/n-18);
+  const cols=[C.acc,C.teal,C.sky,C.lav,C.pink,C.gold,C.coral];
+  vals.forEach((v,i)=>{
+    const cx=44+(W-70)*(i+.5)/n, h=ih*Math.max(0,Math.min(1,v??0)), yy=12+ih-h;
+    ctx.fillStyle="#12161c"; ctx.strokeStyle="#1e242c";
+    ctx.fillRect(cx-bw/2,12,bw,ih); ctx.strokeRect(cx-bw/2,12,bw,ih);
+    if(v!=null&&h>0){ ctx.fillStyle=cols[i%7]; ctx.fillRect(cx-bw/2,yy,bw,h); }
+    ctx.fillStyle="#e8ecf1"; ctx.font="600 12px 'IBM Plex Mono'"; ctx.textAlign="center";
+    ctx.fillText(v==null?"—":Math.round(v*100)+"%", cx, yy-6<26?26:yy-6);
+    ctx.fillStyle="#4a5462"; ctx.font="500 10px 'IBM Plex Mono'"; ctx.fillText("p"+i, cx, Hh-7);
+  });
+}
+function drawAll(){ for(const p of PANELS) p.bars?drawBarsPanel():drawPanel(p); }
+
+/* ---------------- interactions ---------------- */
+const tip = $("tip");
+for (const p of PANELS){
+  if (p.bars) continue;
+  const cv = $("cv_"+p.id);
+  let drag = null;
+  cv.addEventListener("pointerdown", e=>{ drag={x:e.clientX, t1:view.t1}; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener("pointerup", ()=>{ drag=null; });
+  cv.addEventListener("pointercancel", ()=>{ drag=null; });
+  cv.addEventListener("pointermove", e=>{
+    if (drag){
+      const dx = e.clientX - drag.x, iw = cv.clientWidth-PL-(p._pr||PR);
+      view.t1 = Math.min(Date.now(), drag.t1 - dx/iw*view.span);
+      if (view.t1 < Date.now()-5000 && view.live){ view.live=false; $("livebtn").className=""; }
+      drawAll();
+      clearTimeout(cv._ft); cv._ft = setTimeout(fetchHist, 120);
+      return;
+    }
+    crosshair(p, cv, e);
+  });
+  cv.addEventListener("pointerleave", ()=> tip.style.display="none");
+  cv.addEventListener("wheel", e=>{
+    e.preventDefault();
+    const iw = cv.clientWidth-PL-(p._pr||PR);
+    const frac = Math.max(0,Math.min(1,(e.offsetX-PL)/iw));
+    const tCur = view.t1-view.span+frac*view.span;
+    const f = Math.exp(e.deltaY*0.0015);
+    view.span = Math.max(30e3, Math.min(45*86400e3, view.span*f));
+    view.t1 = Math.min(Date.now(), tCur+(1-frac)*view.span);
+    if (view.t1 < Date.now()-5000 && view.live){ view.live=false; $("livebtn").className=""; }
+    document.querySelectorAll("#ranges button").forEach(x=>x.className="");
+    drawAll();
+    clearTimeout(cv._ft); cv._ft = setTimeout(fetchHist, 120);
+  }, {passive:false});
+  cv.addEventListener("dblclick", ()=> setLive(true));
+}
+function crosshair(p, cv, e){
+  if (!H || !H.t || !H.t.length){ tip.style.display="none"; return; }
+  const t0=view.t1-view.span;
+  const frac=(e.offsetX-PL)/(cv.clientWidth-PL-(p._pr||PR));
+  const tq=(t0+frac*view.span)/1000;
+  let bi=0, bd=Infinity;
+  for(let i=0;i<H.t.length;i++){const d=Math.abs(H.t[i]-tq);if(d<bd){bd=d;bi=i;}}
+  const dt=new Date(H.t[bi]*1000);
+  let rows="";
+  for (const s of p.series){
+    const v=(H[s.col]||[])[bi];
+    if (v==null) continue;
+    rows+=`<div class="tr2"><span style="color:${s.c}">${s.n}</span><b>${(p.fmt||fmtN)(v)}</b></div>`;
+  }
+  if (!rows){ tip.style.display="none"; return; }
+  tip.innerHTML=`<div class="th">${dt.toLocaleString()}</div>${rows}`;
+  tip.style.display="block";
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  tip.style.left=Math.min(innerWidth-tw-12, e.clientX+14)+"px";
+  tip.style.top=Math.min(innerHeight-th-12, e.clientY+14)+"px";
+}
+
+/* ---------------- live activations (viz) ---------------- */
+const VIZ = {act:null, sched:null, brain:null, scan:null, rib:[], lastStep:-1, fps:0, frames:0, t0:Date.now(), ambient:false};
+const b64u16 = s => new Uint16Array(Uint8Array.from(atob(s), c=>c.charCodeAt(0)).buffer);
+const b64u8  = s => Uint8Array.from(atob(s), c=>c.charCodeAt(0));
+async function fetchViz(){
+  try{
+    const d = await (await fetch(`${API}/viz`, {cache:"no-store"})).json();
+    const st = $("viz_state");
+    if (d.act && d.act_age < 5){
+      st.textContent = `live · step ${d.act.step} · ${d.act.T} tok/step · ${VIZ.fps.toFixed(0)} fps`; st.className = "st on";
+      if (d.act.step !== VIZ.lastStep){ VIZ.lastStep = d.act.step; VIZ.frames++; ingestAct(d.act); }
+      if (d.act3d && d.act3d.step !== VIZ.lastStep3){ VIZ.lastStep3 = d.act3d.step; ingestAct3d(d.act3d); }
+      if (d.act3h && d.act3h.step !== VIZ.lastStepH){ VIZ.lastStepH = d.act3h.step; ingestAct3h(d.act3h); }
+    } else {
+      const s = d.status && d.status_age < 6 ? d.status : null;
+      st.textContent = s ? (s.dead ? `telemetry disabled — ${s.reason}` : `telemetry armed (rank ${s.rank}, ${s.n_moe} moe / ${s.n_attn ?? s.n_mla} attention layers${s.errors ? ", " + s.errors + " errors: " + s.last_error : ""}) — idle, frames appear with the next request`)
+                         : (d.act ? `stale (${d.act_age.toFixed(0)}s)` : "waiting for engine telemetry (MIMO26_VIZ=1 in the kit's .env)");
+      st.className = "st"; }
+    VIZ.sched = d.sched && d.sched_age < 5 ? d.sched : null;
+    if (VIZ.sched && VIZ.sched.ts !== VIZ.schedTs){ VIZ.schedTs = VIZ.sched.ts; if (S3.cortex) S3.cortex.dirty = true; }
+  }catch(e){}
+  const el = (Date.now()-VIZ.t0)/1000; if (el > 2){ VIZ.fps = VIZ.frames/el; VIZ.frames = 0; VIZ.t0 = Date.now(); }
+}
+// act frame (MiMo runtime): routing histogram [n_layers][experts] u16 (row 0 = dense layer, empty), per-layer head means
+// [n_layers][heads] u8 (scaled by the layer's max), ribbon = per-layer attention-output magnitude.
+function ingestAct(a){
+  const L = a.n_layers || 48, E = a.experts || MD.E, K = a.topk || MD.K, NH = a.heads || MD.H, hist = b64u16(a.routing);
+  if (!VIZ.brain || VIZ.brain.length !== L*E) VIZ.brain = new Float32Array(L*E);
+  const B = VIZ.brain, T = Math.max(1, a.T);
+  for (let i=0;i<L*E;i++){ const v = hist[i] / (T*K/E*4); B[i] = Math.max(B[i]*0.82, Math.min(1, v)); }   // decay + normalize
+  const hm = b64u8(a.head_means);
+  if (!VIZ.heads || VIZ.heads.length !== L*NH) VIZ.heads = new Float32Array(L*NH);
+  for (let i=0;i<L*NH;i++) VIZ.heads[i] = Math.max(VIZ.heads[i]*0.8, hm[i]/255);
+  VIZ.headMeans = hm;
+  VIZ.rib.push(a.ribbon.slice(0, L)); if (VIZ.rib.length > 240) VIZ.rib.shift();
+  VIZ.act = a; for (const sc of Object.values(S3)) sc.dirty = true;
+}
+// attention-output magnitudes span ~3 decades across layers (0.1 at layer 0, ~70 at layer 47): shade on a log scale
+const logMag = (v, mx) => Math.log1p(10*Math.max(0, v)) / Math.log1p(10*Math.max(mx, 1e-6));
+function cvctx(id){ const cv=$(id); const dpr=devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight; if(!W||!H) return null;
+  if (cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);}
+  const ctx=cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0); return {ctx,W,H}; }
+function heat(v){ // ink -> teal -> chartreuse -> white
+  if (v<=0) return "#0e1218"; const t=Math.min(1,v);
+  const r = t<0.5 ? 20+ (t/0.5)*40 : 60+((t-0.5)/0.5)*140, g = 40+t*200, b = t<0.5 ? 60+(t/0.5)*120 : 180-((t-0.5)/0.5)*120;
+  return `rgb(${r|0},${g|0},${b|0})`; }
+function drawBrain(){
+  const c = cvctx("cv_brain"); if(!c) return; const {ctx,W,H} = c; ctx.fillStyle="#0b0d10"; ctx.fillRect(0,0,W,H);
+  if (!VIZ.brain){ idleText(ctx,W,H,"expert routing appears here with the first request"); return; }
+  const L = VIZ.act.n_layers || 48, E = VIZ.act.experts || MD.E, l0 = 1, n = L - l0, cw = W/E, ch = H/n;   // rows = moe layers 1..47
+  for (let l=l0;l<L;l++) for (let e=0;e<E;e++){ const v = VIZ.brain[l*E+e]; if (v>0.02){ ctx.fillStyle = heat(v); ctx.fillRect(e*cw, (l-l0)*ch, Math.max(cw,1), Math.max(ch-0.5,1)); } }
+  ctx.fillStyle="#4a5462"; ctx.font="500 9.5px 'IBM Plex Mono'"; ctx.textAlign="left"; ctx.fillText("layer 1", 4, 10); ctx.fillText("layer "+(L-1), 4, H-4);
+  ctx.textAlign="right"; ctx.fillText(`expert ${E-1} →`, W-4, H-4);
+  const load = new Float32Array(E); for (let l=l0;l<L;l++) for (let e=0;e<E;e++) load[e]+=VIZ.brain[l*E+e];
+  const top = [...load.keys()].sort((a,b)=>load[b]-load[a]).slice(0,5);
+  $("brain_sub").textContent = `${VIZ.act.T} tok × top-${VIZ.act.topk || MD.K} · hot: ` + top.map(e=>"#"+e).join(" ");
+}
+/* attention heads: per layer, the mean output magnitude of each of this rank's 32 heads (scaled per layer);
+   gold rows = the 9 global-attention layers, the rest slide over the last 128 tokens */
+function drawScan(){
+  const c = cvctx("cv_scan"); if(!c) return; const {ctx,W,H} = c; ctx.fillStyle="#0b0d10"; ctx.fillRect(0,0,W,H);
+  if (!VIZ.heads){ idleText(ctx,W,H,"per-head attention magnitude appears here with the first request"); return; }
+  const L = VIZ.act.n_layers || 48, NH = VIZ.act.heads || MD.H, gx = 30, cw = (W-gx)/NH, lh = H/L;
+  for (let l=0;l<L;l++){ const full = MD.fullSet.has(l);
+    for (let h=0;h<NH;h++){ const v = VIZ.heads[l*NH+h]; if (v>0.03){ ctx.fillStyle = full ? `rgba(255,194,75,${Math.min(1,0.1+v)})` : `rgba(62,219,182,${Math.min(1,0.08+0.9*v)})`; ctx.fillRect(gx+h*cw+0.5, l*lh+0.5, Math.max(cw-1,1), Math.max(lh-1,1)); } }
+    if (full){ ctx.fillStyle = C.gold; ctx.fillRect(gx-6, l*lh+0.5, 3, Math.max(lh-1,1)); ctx.fillStyle="#8b95a3"; ctx.font="500 8.5px 'IBM Plex Mono'"; ctx.textAlign="right"; ctx.fillText("L"+l, gx-8, l*lh+lh*0.5+3); } }
+  ctx.fillStyle="#4a5462"; ctx.font="500 9.5px 'IBM Plex Mono'"; ctx.textAlign="right"; ctx.fillText("head 31 →", W-4, H-4);
+  let hi = 0, hv = -1; for (let l=0;l<L;l++){ const r = VIZ.rib.length ? VIZ.rib[VIZ.rib.length-1][l] : 0; if (r > hv){ hv = r; hi = l; } }
+  $("scan_sub").textContent = `rank 0 holds heads 0-31 of 64 · ■ global (9) · ■ sliding-window 128 (39) · strongest layer L${hi}`;
+}
+function drawRibbon(){
+  const c = cvctx("cv_ribbon"); if(!c) return; const {ctx,W,H} = c; ctx.fillStyle="#0b0d10"; ctx.fillRect(0,0,W,H);
+  if (!VIZ.rib.length){ idleText(ctx,W,H,"per-layer attention-output magnitude appears here with the first request"); return; }
+  const N = VIZ.rib[0].length, n = VIZ.rib.length; let mx = 1e-6; for (const r of VIZ.rib) for (const v of r) if (v>mx) mx=v;
+  const cw = W/Math.max(n, 60), lh = H/N;   // stretch until ~6 s of history exists
+  for (let i=0;i<n;i++){ const r = VIZ.rib[i], x = W - (n-i)*cw;
+    for (let l=0;l<N;l++){ const v = logMag(r[l], mx); ctx.fillStyle = MD.fullSet.has(l) ? `rgba(255,194,75,${0.08+0.9*v*v})` : `rgba(200,245,66,${0.08+0.9*v*v})`; ctx.fillRect(x, l*lh, cw+0.5, lh-0.4); } }
+  const last = VIZ.rib[n-1]; let hi=0; for (let l=0;l<N;l++) if (last[l]>last[hi]) hi=l;
+  $("ribbon_sub").textContent = `layer 0 at top · log scale · peak layer ${hi} · ${last[hi].toFixed(1)} · gold = global attention`;
+}
+function drawKV(){
+  const c = cvctx("cv_kv"); if(!c) return; const {ctx,W,H} = c; ctx.fillStyle="#0b0d10"; ctx.fillRect(0,0,W,H);
+  const s = VIZ.sched; const pool = kvTotal() || (s && s.pool_tokens) || 3191849;
+  const cols = 128, rows = 12, tiles = cols*rows, tw = W/cols, th = H/rows;
+  const cell = i => [ (i%cols)*tw, Math.floor(i/cols)*th ];
+  for (let i=0;i<tiles;i++){ const [x,y]=cell(i); ctx.fillStyle="#12161c"; ctx.fillRect(x+0.5,y+0.5,tw-1,th-1); }
+  if (!s){ idleText(ctx,W,H,"kv pool map appears here once the scheduler snapshot is live"); return; }
+  const palette=[C.acc,C.sky,C.coral,C.lav,C.gold,C.teal,C.pink,"#9db4ff"]; let cursor=0;
+  (s.reqs||[]).forEach((r,k)=>{ const nt = Math.round(tiles * r.total / pool), done = Math.round(tiles * r.computed / pool), col = palette[k%palette.length];
+    for (let i=0;i<nt && cursor+i<tiles;i++){ const [x,y]=cell(cursor+i); ctx.fillStyle = i<done ? col : col+"55"; ctx.fillRect(x+0.5,y+0.5,tw-1,th-1); }
+    if (r.computed < r.prompt){ const [x,y]=cell(Math.min(tiles-1,cursor+done)); ctx.fillStyle="#fff"; ctx.fillRect(x,y,tw,th); }   // prefill head
+    cursor += nt; });
+  const used = Math.round(tiles*s.usage); for (let i=cursor;i<used && i<tiles;i++){ const [x,y]=cell(i); ctx.fillStyle="#2a323d"; ctx.fillRect(x+0.5,y+0.5,tw-1,th-1); }  // cached / other
+  // per-request progress legend (top-left): id · computed/prompt · prefill % or generating
+  const lines = (s.reqs||[]).slice(0,8).map((r,k)=>[palette[k%palette.length], reqLabel(r)]);
+  if (lines.length){ ctx.font = "600 11px 'IBM Plex Mono', monospace"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; const lw = Math.max(...lines.map(l=>ctx.measureText(l[1]).width)) + 26, lh = 15;
+    ctx.fillStyle = "rgba(11,13,16,0.82)"; ctx.fillRect(6, 6, lw, lines.length*lh + 8);
+    lines.forEach(([col, txt], i)=>{ ctx.fillStyle = col; ctx.fillRect(12, 12 + i*lh, 8, 8); ctx.fillStyle = "#dfe6ee"; ctx.fillText(txt, 26, 20 + i*lh); }); }
+  $("kv_sub").textContent = kvUsedText(s) + ` · ${(s.reqs||[]).length} live · ${s.waiting} waiting` + poolText(s); $("kv_title").textContent = kvTitle("kv pool");
+  const kvh = $("cv_kv").parentElement.querySelector("h4"); if (kvh) kvh.textContent = `kv pool — ${(pool/1e6).toFixed(2)}M tokens`;
+}
+function gauge(ctx,x,y,r,v,max,label,unit,color){
+  const a0=Math.PI*0.75, a1=Math.PI*2.25, t=Math.max(0,Math.min(1,v/max));
+  ctx.lineWidth=7; ctx.strokeStyle="#1e242c"; ctx.beginPath(); ctx.arc(x,y,r,a0,a1); ctx.stroke();
+  ctx.strokeStyle=color; ctx.beginPath(); ctx.arc(x,y,r,a0,a0+(a1-a0)*t); ctx.stroke();
+  ctx.fillStyle="#e8ecf1"; ctx.font="600 15px 'IBM Plex Mono'"; ctx.textAlign="center"; ctx.fillText(v==null?"—":(v>=100?v.toFixed(0):v.toFixed(1)), x, y+5);
+  ctx.fillStyle="#8b95a3"; ctx.font="500 9.5px 'IBM Plex Mono'"; ctx.fillText(unit, x, y+18); ctx.fillStyle="#4a5462"; ctx.fillText(label, x, y+r+16);
+}
+function drawGauges(){
+  const c = cvctx("cv_gauge"); if(!c) return; const {ctx,W,H} = c; ctx.fillStyle="#0b0d10"; ctx.fillRect(0,0,W,H);
+  const r = (LIVE&&LIVE.row)||{}, n=(LIVE&&LIVE.nodes)||{};
+  // bandwidth model (per rank, from the collector's model profile): distinct routed experts touched per step x expert
+  // size x moe layers + fixed weights (attention, dense, lm_head, drafter) + KV reads of the live contexts, x steps/s
+  const bw = (LIVE && LIVE.profile && LIVE.profile.bw) || {experts:256, topk:8, moe_layers:47, expert_gb:0.00668, fixed_gb:5.9, kv_bytes_per_tok:3240, swa_bytes_per_req:3.6e6, kv_gb_per_run:0, peak_gb_s:273};
+  const tok = r.stepsz||0, steps = r.steps||0, reqs = (VIZ.sched && VIZ.sched.reqs) || [];
+  const kvgb = (reqs.length && bw.kv_bytes_per_tok) ? reqs.reduce((a,q)=>a+(q.total||0),0)*bw.kv_bytes_per_tok/1e9 + reqs.length*(bw.swa_bytes_per_req||0)/1e9 : (bw.kv_gb_per_run||0)*Math.max(1,(r.run||1));
+  const distinct = bw.experts*(1-Math.exp(-tok*bw.topk/bw.experts)), gb = steps ? (distinct*bw.expert_gb*bw.moe_layers + bw.fixed_gb + kvgb) * steps : 0;
+  const items = [
+    [gb, bw.peak_gb_s||273, "memory bandwidth", "GB/s", C.acc], [(r.steps||0), 12, "engine steps", "/s", C.sky],
+    [(n.h&&n.h.gpu.power)||0, 100, "head power", "W", C.gold], [(n.w&&n.w.gpu.power)||0, 100, "worker power", "W", C.gold],
+    [(n.h&&n.h.gpu.temp)||0, 95, "head temp", "°C", C.coral], [(n.w&&n.w.gpu.temp)||0, 95, "worker temp", "°C", C.coral],
+    [(n.h&&n.h.gpu.sm_mhz)||0, 2300, "head clock", "MHz", C.lav], [(n.w&&n.w.gpu.sm_mhz)||0, 2300, "worker clock", "MHz", C.lav],
+  ];
+  const k = items.length, gw = W/k, rad = Math.min(38, H*0.32);
+  items.forEach((it,i)=> gauge(ctx, gw*(i+0.5), H*0.45, rad, it[0], it[1], it[2], it[3], it[4]));
+  $("gauge_sub").textContent = `≈ ${gb.toFixed(0)} GB/s of ${bw.peak_gb_s||273} peak per rank (estimate: experts touched + fixed weights + kv reads)`;
+}
+function idleText(ctx,W,H,msg){ ctx.fillStyle="#4a5462"; ctx.font="500 11px 'IBM Plex Mono'"; ctx.textAlign="center"; ctx.fillText(msg, W/2, H/2+4); }
+function drawViz(){ if (VIZ.three){ draw3D(); } else { drawBrain(); drawScan(); drawRibbon(); drawKV(); } drawGauges(); }
+
+/* ---------------- 3-D views (three.js) ---------------- */
+VIZ.three = (localStorage.getItem("viz_mode") || "3d") === "3d";
+VIZ.a3 = null; VIZ.lastStep3 = -1; VIZ.ah = null; VIZ.lastStepH = -1; VIZ.space = []; VIZ.spaceStat = null;
+const f16 = u => { const s=(u>>15)&1, e=(u>>10)&31, m=u&1023; let v = e===0 ? m*Math.pow(2,-24) : e===31 ? (m?NaN:Infinity) : (1+m/1024)*Math.pow(2,e-15); return s?-v:v; };
+// act3d frame: per-token routing [n_moe][T3][K] (u8 from the MiMo runtime, 255 = none; int16 from older runtimes),
+// the sampled positions' final hidden state projected to 3-D (h3n rows, request spans in h3reqs), accepted counts.
+function ingestAct3d(a){
+  const rb = Uint8Array.from(atob(a.routing3d), c=>c.charCodeAt(0));
+  a.r3 = a.r3dtype === "u8" ? rb : new Int16Array(rb.buffer, 0, rb.byteLength>>1);
+  const hb = Uint8Array.from(atob(a.h3), c=>c.charCodeAt(0)); const hu = new Uint16Array(hb.buffer, 0, hb.byteLength>>1);
+  a.pts = new Float32Array(hu.length); for (let i=0;i<hu.length;i++) a.pts[i] = f16(hu[i]);
+  a.hn = a.h3n ?? a.T3;
+  VIZ.a3 = a;
+  // activation-space history (per sampled position), with running normalisation
+  const T = a.hn, st = VIZ.spaceStat || (VIZ.spaceStat = {m:[0,0,0], v:[1,1,1]});
+  for (let t=0;t<T;t++) for (let k=0;k<3;k++){ const x=a.pts[t*3+k]; if(!isFinite(x)) continue; st.m[k]+= (x-st.m[k])*0.02; st.v[k]+= ((x-st.m[k])*(x-st.m[k])-st.v[k])*0.02; }
+  VIZ.space.push({T, p:a.pts, hues:tokenReqHue(a.h3reqs || a.reqs, T)}); if (VIZ.space.length > 90) VIZ.space.shift();
+  for (const sc of Object.values(S3)) sc.dirty = true;
+}
+// act3h frame: per-token, per-head attention-output magnitude [n_layers][TA][heads] u8 (scaled per layer)
+function ingestAct3h(a){ a.v = b64u8(a.heads3d); VIZ.ah = a; if (S3.attn) S3.attn.dirty = true; }
+const S3 = {};
+function tokenReqHue(spans, n){ const out = new Array(Math.max(0, n|0)).fill(null); if (!spans) return out; for (const [id,start,count] of spans){ const c = new THREE.Color().setHSL(reqHue(id), 0.85, 0.6); for (let t=start;t<start+count&&t<out.length;t++) out[t]=c; } return out; }
+function mk3(id){
+  const el = $(id); if (!el || !window.THREE) return null;
+  const r = new THREE.WebGLRenderer({canvas:el, antialias:true, alpha:false, powerPreference:"high-performance"});
+  r.setPixelRatio(Math.min(devicePixelRatio||1, 2)); r.setClearColor(0x0b0d10, 1);
+  const s = new THREE.Scene(); const c = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
+  const o = {r, s, c, el, dirty:true, theta:0.6, phi:1.15, rad:60, target:new THREE.Vector3(), auto:true, lastDrag:0};
+  // left-drag orbits, right-drag (or middle-drag) pans the orbit target in the camera plane, wheel zooms, double-click resets
+  el.addEventListener("pointerdown", e=>{ if (e.button === 2 || e.button === 1) o.pan={x:e.clientX,y:e.clientY,t:o.target.clone()}; else o.drag={x:e.clientX,y:e.clientY,th:o.theta,ph:o.phi};
+    el.setPointerCapture(e.pointerId); el.style.cursor = o.pan ? "move" : "grabbing"; });
+  el.addEventListener("pointermove", e=>{
+    if (o.pan){ const k = o.rad*0.0016, dir = new THREE.Vector3(); o.c.getWorldDirection(dir);
+      const right = new THREE.Vector3().crossVectors(dir, o.c.up).normalize(), up = new THREE.Vector3().crossVectors(right, dir).normalize();
+      o.target.copy(o.pan.t).addScaledVector(right, -(e.clientX-o.pan.x)*k).addScaledVector(up, (e.clientY-o.pan.y)*k); o.lastDrag = Date.now(); return; }
+    if(!o.drag) return; o.theta = o.drag.th - (e.clientX-o.drag.x)*0.008; o.phi = Math.max(0.15, Math.min(2.9, o.drag.ph - (e.clientY-o.drag.y)*0.008)); o.lastDrag = Date.now(); });
+  el.addEventListener("pointerup", ()=>{ o.drag=null; o.pan=null; el.style.cursor="grab"; }); el.addEventListener("pointercancel", ()=>{ o.drag=null; o.pan=null; });
+  el.addEventListener("contextmenu", e=>e.preventDefault());
+  el.addEventListener("wheel", e=>{ e.preventDefault(); o.rad = Math.max(8, Math.min(200, o.rad*Math.exp(e.deltaY*0.0012))); o.lastDrag = Date.now(); }, {passive:false});
+  el.addEventListener("dblclick", ()=>{ o.theta=o.theta0 ?? 0.6; o.phi=o.phi0 ?? 1.15; o.rad=o.rad0||60; if (o.target0) o.target.copy(o.target0); });
+  return o;
+}
+function place(o){
+  const W = o.el.clientWidth, H = o.el.clientHeight; if (!W||!H) return false;
+  if (!o.target0){ o.target0 = o.target.clone(); o.theta0 = o.theta; o.phi0 = o.phi; }   // home view = what init left, for double-click reset
+  const need = o.el.width !== Math.round(W*(Math.min(devicePixelRatio||1,2))) ;
+  if (need){ o.r.setSize(W, H, false); o.c.aspect = W/H; o.c.updateProjectionMatrix(); }
+  if (o.auto && !o.drag && Date.now()-o.lastDrag > 4000) o.theta += 0.0025;
+  const sp = Math.sin(o.phi); o.c.position.set(o.target.x + o.rad*sp*Math.sin(o.theta), o.target.y + o.rad*Math.cos(o.phi), o.target.z + o.rad*sp*Math.cos(o.theta));
+  o.c.lookAt(o.target); return true;
+}
+const heat3 = (v, out) => { const t=Math.min(1,Math.max(0,v)); out[0]=(t<0.5?20+(t/0.5)*40:60+((t-0.5)/0.5)*140)/255*t; out[1]=(40+t*200)/255*t; out[2]=(t<0.5?60+(t/0.5)*120:180-((t-0.5)/0.5)*120)/255*t; return out; };
+const tokenHue = (i, n, out) => { const h=(i/Math.max(n,1))*0.85, c=new THREE.Color().setHSL(h, 0.9, 0.6); out[0]=c.r; out[1]=c.g; out[2]=c.b; return out; };
+const addMat = (extra={}) => Object.assign({color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false}, extra);
+
+/* cortex: the model itself. MiMo-V2.6-Flash drawn as a 48-layer tower: tokenizer / vision encoder -> embedding at the
+   bottom, then per layer the attention block (32 head cells = rank 0's half of the 64 heads; the 9 global-attention
+   layers are gold, with a context rail that grows with the longest live context, the 39 sliding-window layers are teal
+   with a fixed 128-token rail) and the MLP (layer 0 dense, then 47 MoE plates of 16x16 = 256 experts, top-8, no shared
+   expert), the LM head / sampler on top and the DFlash drafter beside it (glows with the tokens it got accepted).
+   Strands are this step's tokens (colour = request) through the experts they were routed to; head cells glow with each
+   head's output magnitude; the spine is each layer's attention-output magnitude. No token ids or text are shown or
+   received: the runtime only sends per-request counts. */
+const MD = (() => {
+  const full = [0,5,11,17,23,29,35,41,47], L = 48;
+  return {L, full, fullSet:new Set(full), E:256, cols:16, K:8, H:32, DY:0.95, W:8, D:8,
+          yOf: l => l*0.95, yEmb:-3.2, yHead:L*0.95+1.4, xDraft:10.5, zAttn:-6.0, xSpine:-6.6};
+})();
+const cellXZ = e => [ ((e%MD.cols) - (MD.cols-1)/2)*0.5, (Math.floor(e/MD.cols) - (MD.E/MD.cols-1)/2)*0.5 ];
+const headX = h => (h - (MD.H-1)/2)*0.25;
+const tokX = (t, n) => -4 + 8*(t+0.5)/Math.max(n,1);
+const reqHue = (id) => { let x=0; for (const ch of id) x=(x*31+ch.charCodeAt(0))>>>0; return (x%360)/360; };
+function textSprite(scaleX, scaleY){ const cv = document.createElement("canvas"); cv.width = 1024; cv.height = 72; const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthTest: false})); sp.scale.set(scaleX, scaleY, 1); sp.userData = {cv, tex, text: ""}; return sp; }
+function setText(sp, text, col, align){ if (sp.userData.text === text && sp.userData.col === col) return; const {cv, tex} = sp.userData, g = cv.getContext("2d");
+  g.clearRect(0,0,cv.width,cv.height); g.font = "500 30px 'IBM Plex Mono', monospace"; g.textBaseline = "middle";
+  let s = text; while (s.length > 4 && g.measureText(s).width > cv.width - 60) s = s.slice(0, -4) + "…";
+  const w = g.measureText(s).width + 52, x0 = align === "right" ? cv.width - w : 0;
+  g.fillStyle = "rgba(11,13,16,0.78)"; g.fillRect(x0, 10, w, 52); if (col){ g.fillStyle = col; g.fillRect(x0+10, 26, 18, 18); }
+  g.fillStyle = "#e8eef4"; g.fillText(s, x0 + (col ? 40 : 14), 36); tex.needsUpdate = true; sp.userData.text = text; sp.userData.col = col; }
+function initCortex(){
+  const o = mk3("cv3_cortex"); if (!o) return; o.rad = o.rad0 = 62; o.theta = 0.62; o.phi = 1.28; o.target.set(1.0, MD.yOf(23), -1.5); S3.cortex = o;
+  const m = new THREE.Matrix4(), dim = new THREE.Color(0.012,0.016,0.022);
+  const inst = (geo, n, opacity=0.9) => { const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity, depthWrite:true}), n);   // solid plates: occlude, do not add
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n*3), 3); for (let i=0;i<n;i++) mesh.setColorAt(i, dim); mesh.frustumCulled = false; o.s.add(mesh); return mesh; };
+  // MoE experts: 47 plates (layers 1..47), 16 x 16 cells each
+  o.ex = inst(new THREE.BoxGeometry(0.42,0.2,0.42), (MD.L-1)*MD.E, 0.75);
+  for (let l=1;l<MD.L;l++) for (let e=0;e<MD.E;e++){ const [x,z]=cellXZ(e); m.makeTranslation(x, MD.yOf(l), z); o.ex.setMatrixAt((l-1)*MD.E+e, m); }
+  o.ex.instanceMatrix.needsUpdate = true; o.hist = new Float32Array((MD.L-1)*MD.E);
+  // dense MLP plate (layer 0)
+  o.dn = inst(new THREE.BoxGeometry(MD.W,0.22,MD.D), 1, 0.7); m.makeTranslation(0, MD.yOf(0), 0); o.dn.setMatrixAt(0, m); o.dn.instanceMatrix.needsUpdate = true;
+  // attention heads behind each plate (rank 0's 32 of 64); global layers taller
+  o.hd = inst(new THREE.BoxGeometry(0.2,0.3,0.5), MD.L*MD.H, 0.9);
+  for (let l=0;l<MD.L;l++){ const g = MD.fullSet.has(l); for (let h=0;h<MD.H;h++){ m.makeScale(1, g?1.7:1, g?1.3:1); m.setPosition(headX(h), MD.yOf(l), MD.zAttn); o.hd.setMatrixAt(l*MD.H+h, m); } }
+  o.hd.instanceMatrix.needsUpdate = true; o.hhist = new Float32Array(MD.L*MD.H);
+  // context rails (how far back each layer attends), spine, embedding + LM-head plates, drafter plates, token dots
+  o.rl = inst(new THREE.BoxGeometry(0.16,0.16,1), MD.L, 0.95);
+  o.sp = inst(new THREE.BoxGeometry(0.6, MD.DY*0.9, 0.6), MD.L, 0.8); for (let l=0;l<MD.L;l++){ m.makeTranslation(MD.xSpine, MD.yOf(l), 0); o.sp.setMatrixAt(l, m); } o.sp.instanceMatrix.needsUpdate = true;
+  o.st = inst(new THREE.BoxGeometry(MD.W+1, 0.25, MD.D+1), 2, 0.6); m.makeTranslation(0, MD.yEmb, 0); o.st.setMatrixAt(0, m); m.makeTranslation(0, MD.yHead, 0); o.st.setMatrixAt(1, m); o.st.instanceMatrix.needsUpdate = true;
+  o.st.setColorAt(0, new THREE.Color(0.05,0.06,0.08)); o.st.setColorAt(1, new THREE.Color(0.05,0.06,0.08)); o.st.instanceColor.needsUpdate = true;
+  o.dr = inst(new THREE.BoxGeometry(4.2,0.2,4.2), 5, 0.75); for (let i=0;i<5;i++){ m.makeTranslation(MD.xDraft, MD.yHead-(4-i)*MD.DY, 0); o.dr.setMatrixAt(i, m); } o.dr.instanceMatrix.needsUpdate = true;
+  o.tk = inst(new THREE.SphereGeometry(0.28, 8, 6), 32, 1.0); o.tk.count = 0;
+  // strands (token -> dense -> expert ... -> head)
+  const mkLines = (cap, opacity) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(cap*6),3)); g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(cap*6),3));
+    const ln = new THREE.LineSegments(g, new THREE.LineBasicMaterial(addMat({vertexColors:true, opacity}))); ln.frustumCulled = false; o.s.add(ln); return ln; };
+  o.strands = mkLines(32*8*(MD.L+2), 0.16);
+  // static frame: plate outlines at the bottom/top, tower edges, drafter link
+  const fp = [], hx = MD.W/2+0.5, hz = MD.D/2+0.5;
+  for (const y of [MD.yEmb, MD.yHead]) fp.push(-hx,y,-hz, hx,y,-hz, hx,y,-hz, hx,y,hz, hx,y,hz, -hx,y,hz, -hx,y,hz, -hx,y,-hz);
+  for (const [x,z] of [[-hx,-hz],[hx,-hz],[hx,hz],[-hx,hz]]) fp.push(x,MD.yEmb,z, x,MD.yHead,z);
+  fp.push(hx, MD.yHead, 0, MD.xDraft-2.1, MD.yHead, 0);
+  const fg = new THREE.BufferGeometry(); fg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(fp),3)); o.s.add(new THREE.LineSegments(fg, new THREE.LineBasicMaterial({color:0x232a34})));
+  // labels
+  const lab = (text, x, y, z, sx=13, sy=0.95, align) => { const sp = textSprite(sx, sy); setText(sp, text, null, align); sp.position.set(x,y,z); o.s.add(sp); return sp; };
+  lab("tokenizer · vision encoder → embedding", -4.0, MD.yEmb-1.0, 4.0, 18, 1.15);
+  lab("LM head → sampler", -4.0, MD.yHead+1.1, 4.0, 16, 1.15);
+  lab("DFlash drafter · 5 layers · 7 draft tokens / step", MD.xDraft, MD.yHead+1.6, 2.4, 21, 1.05);
+  lab("attention output magnitude", MD.xSpine-1.5, MD.yOf(MD.L)+0.6, 0, 13, 0.95);
+  lab("attention heads (32 of 64) · context reach →", 0, MD.yOf(MD.L)+0.6, MD.zAttn, 20, 1.05);
+  for (const l of MD.full) lab(`L${l} · global + ${l ? "moe" : "dense"}`, -12.6, MD.yOf(l), 0, 11, 0.9);
+  o.tin = []; o.tout = [];      // per-request count labels, created on demand
+}
+function poolText3(o, list, n, y0, dir, x, z){ while (list.length < n){ const sp = textSprite(30, 1.7); o.s.add(sp); list.push(sp); } list.forEach((sp,i)=>{ sp.visible = i < n; if (i < n) sp.position.set(x, y0 + dir*(2.4 + i*1.7), z); }); }
+function drawCortex(){
+  const o = S3.cortex; if (!o || !place(o)) return;
+  if (o.dirty){
+    const a = VIZ.a3, c = new THREE.Color(), rgb = [0,0,0], m = new THREE.Matrix4();
+    const T = a ? a.T3 : 0, K = a ? (a.topk || MD.K) : MD.K, nMoe = a ? Math.min(a.n_moe, MD.L-1) : 0;
+    const hues = tokenReqHue(a && a.reqs, T), hueOf = t => hues[t] || c.setHSL((t/Math.max(T,1))*0.85, 0.9, 0.6).clone();
+    // --- experts: decay then add this step's routing
+    for (let i=0;i<o.hist.length;i++) o.hist[i] *= 0.82;
+    if (a) for (let l=0;l<nMoe;l++) for (let t=0;t<T;t++) for (let k=0;k<K;k++){ const e = a.r3[(l*T+t)*K+k]; if (e < 0 || e >= MD.E) continue; const i = l*MD.E+e; o.hist[i] = Math.min(1, o.hist[i] + 0.35); }
+    for (let i=0;i<o.hist.length;i++){ const v = o.hist[i]; if (v < 0.03) o.ex.setColorAt(i, c.setRGB(0.05,0.06,0.075)); else { heat3(v*0.9, rgb); o.ex.setColorAt(i, c.setRGB(rgb[0]*0.85, rgb[1]*0.85, rgb[2]*0.85)); } }
+    o.ex.instanceColor.needsUpdate = true;
+    // --- attention heads: per-head output magnitude from the latest act frame (scaled per layer)
+    const hm = VIZ.headMeans;
+    for (let l=0;l<MD.L;l++){ const g = MD.fullSet.has(l); for (let h=0;h<MD.H;h++){ const i = l*MD.H+h; o.hhist[i] = Math.max(o.hhist[i]*0.75, hm ? hm[i]/255 : 0); const w = o.hhist[i];
+        o.hd.setColorAt(i, g ? c.setRGB(0.07+0.9*w, 0.06+0.68*w, 0.02+0.12*w) : c.setRGB(0.03+0.2*w, 0.06+0.75*w, 0.08+0.6*w)); } }
+    o.hd.instanceColor.needsUpdate = true;
+    // --- spine (per-layer attention-output magnitude) + dense plate glow
+    const rib = VIZ.rib.length ? VIZ.rib[VIZ.rib.length-1] : null; let mx = 1e-6; if (rib) for (const v of rib) if (v > mx) mx = v;
+    for (let l=0;l<MD.L;l++){ const v = rib ? logMag(rib[l], mx) : 0; o.sp.setColorAt(l, c.setRGB(0.08+0.85*v, 0.07+0.62*v, 0.02+0.12*v)); }
+    { const v = rib ? logMag(rib[0], mx) : 0; o.dn.setColorAt(0, c.setRGB(0.04+0.25*v, 0.05+0.35*v, 0.07+0.25*v)); }
+    o.sp.instanceColor.needsUpdate = true; o.dn.instanceColor.needsUpdate = true;
+    // --- context rails: global layers reach the longest live context (log scale), sliding-window layers 128 tokens
+    const reqs = (VIZ.sched && VIZ.sched.reqs) || [], maxCtx = reqs.reduce((s,q)=>Math.max(s, q.total||0), 0);
+    for (let l=0;l<MD.L;l++){ const g = MD.fullSet.has(l), len = g ? 1.2 + 2.4*Math.log10(Math.max(maxCtx,128)/128) : 1.2;
+      m.makeScale(1, 1, len); m.setPosition(headX(MD.H-1)+0.5, MD.yOf(l), MD.zAttn-0.4-len/2); o.rl.setMatrixAt(l, m);
+      const w = g ? (maxCtx ? 0.95 : 0.35) : 0.5; o.rl.setColorAt(l, g ? c.setRGB(0.95*w, 0.7*w, 0.2*w) : c.setRGB(0.15*w, 0.75*w, 0.6*w)); }
+    o.rl.instanceMatrix.needsUpdate = true; o.rl.instanceColor.needsUpdate = true;
+    // --- drafter: glows with the mean tokens accepted per request this step (1 + accepted drafts, of 8)
+    const acc = (a && a.acc) || [], accMean = acc.length ? acc.reduce((s,q)=>s+q[1],0)/acc.length : 0, dw = Math.min(1, accMean/8);
+    for (let i=0;i<5;i++) o.dr.setColorAt(i, c.setRGB(0.05+0.45*dw, 0.06+0.25*dw, 0.08+0.85*dw)); o.dr.instanceColor.needsUpdate = true;
+    // --- token dots + strands through the experts each token was routed to
+    o.tk.count = Math.min(T, 32);
+    for (let t=0;t<o.tk.count;t++){ m.makeTranslation(tokX(t,T), MD.yEmb+0.45, 0); o.tk.setMatrixAt(t, m); o.tk.setColorAt(t, hueOf(t)); }
+    o.tk.instanceMatrix.needsUpdate = true; if (o.tk.instanceColor) o.tk.instanceColor.needsUpdate = true;
+    const sp = o.strands.geometry.attributes.position.array, sc = o.strands.geometry.attributes.color.array; let ns = 0; const cap = 32*8*(MD.L+2);
+    const seg = (x0,y0,z0,x1,y1,z1,hc,w) => { if (ns >= cap) return; sp.set([x0,y0,z0,x1,y1,z1], ns*6); sc.set([hc.r*w,hc.g*w,hc.b*w, hc.r*w,hc.g*w,hc.b*w], ns*6); ns++; };
+    for (let t=0;t<Math.min(T,32);t++){ const hc = hueOf(t), xt = tokX(t,T);
+      for (let k=0;k<K;k++){ let px = xt, py = MD.yEmb+0.45, pz = 0;
+        seg(px,py,pz, xt*0.35, MD.yOf(0), (k-3.5)*0.4, hc, 0.9); px = xt*0.35; py = MD.yOf(0); pz = (k-3.5)*0.4;
+        for (let l=1;l<=nMoe;l++){ const e = a.r3[((l-1)*T+t)*K+k]; if (e < 0 || e >= MD.E) continue; const [x,z] = cellXZ(e); seg(px,py,pz, x,MD.yOf(l),z, hc, 0.9); px = x; py = MD.yOf(l); pz = z; }
+        seg(px,py,pz, xt*0.5, MD.yHead, 0, hc, 0.9); } }
+    o.strands.geometry.setDrawRange(0, ns*2); o.strands.geometry.attributes.position.needsUpdate = true; o.strands.geometry.attributes.color.needsUpdate = true;
+    // --- per-request counts only (no token ids or text ever reach the page): tokens entering this step, tokens accepted
+    const tin = ((a && a.reqs)||[]).map(([id,s,n]) => [id, `${id} · ${n} tok in`]);
+    const tout = acc.map(([id,n]) => [id, `${id} · ${n} accepted`]);
+    poolText3(o, o.tin, Math.min(tin.length, 8), MD.yEmb, -1, 0, 4.0); tin.slice(0,8).forEach(([id,txt],i) => setText(o.tin[i], txt, `hsl(${reqHue(id)*360},85%,60%)`));
+    poolText3(o, o.tout, Math.min(tout.length, 8), MD.yHead, 1, 0, 4.0); tout.slice(0,8).forEach(([id,txt],i) => setText(o.tout[i], txt, `hsl(${reqHue(id)*360},85%,60%)`));
+    const rq = (a && a.reqs) || []; $("cx_sub").innerHTML = (rq.length ? rq.map(([id,s,n]) => `<span style="color:hsl(${reqHue(id)*360},85%,60%)">■</span> ${id} · ${n} tok`).join(" &nbsp; ") : "no tokens this step")
+      + ` &nbsp;·&nbsp; 48 layers (9 global + 39 swa-128) · 47 moe × 256, top-8 · dflash 7 · ${maxCtx ? "longest context " + fmtK(maxCtx) + " · " : ""}drag to orbit · right-drag to pan`;
+    o.dirty = false;
+  }
+  o.r.render(o.s, o.c);
+}
+/* attention heads volume: points at (head, token, layer) = per-token output magnitude of each of rank 0's heads,
+   scaled per layer; gold = global-attention layers, teal = sliding-window layers */
+const AV = {L:48, T:16, H:32};
+function initAttn(){
+  const o = mk3("cv3_attn"); if (!o) return; o.rad = o.rad0 = 64; o.theta = 0.9; o.phi = 1.1; o.target.set(0, 0, -(AV.L-1)*0.6);
+  const n = AV.L*AV.T*AV.H, pos = new Float32Array(n*3), col = new Float32Array(n*3);
+  for (let l=0;l<AV.L;l++) for (let t=0;t<AV.T;t++) for (let h=0;h<AV.H;h++){ const i=(l*AV.T+t)*AV.H+h; pos[i*3]=(h-(AV.H-1)/2)*0.55; pos[i*3+1]=(t-(AV.T-1)/2)*0.9; pos[i*3+2]=-l*1.2; }
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos,3)); g.setAttribute("color", new THREE.BufferAttribute(col,3));
+  o.pts = new THREE.Points(g, new THREE.PointsMaterial(addMat({vertexColors:true, size:0.42, sizeAttenuation:true}))); o.pts.frustumCulled=false; o.s.add(o.pts);
+  o.acc = new Float32Array(n); S3.attn = o;
+}
+function drawAttn(){
+  const o = S3.attn; if (!o || !place(o)) return;
+  if (o.dirty && VIZ.ah){ const a = VIZ.ah, NHa = a.heads || 32, L = Math.min(a.n_layers || 48, AV.L), T = Math.min(a.TA, AV.T), NH = Math.min(NHa, AV.H), col = o.pts.geometry.attributes.color.array;
+    for (let i=0;i<o.acc.length;i++){ o.acc[i]*=0.6; if (o.acc[i]<0.05) o.acc[i]=0; }
+    for (let l=0;l<L;l++) for (let t=0;t<T;t++) for (let h=0;h<NH;h++){ const v = a.v[(l*a.TA+t)*NHa+h]/255, i = (l*AV.T+t)*AV.H+h; if (v > o.acc[i]) o.acc[i] = v; }
+    for (let i=0;i<o.acc.length;i++){ const v = o.acc[i] < 0.15 ? 0 : o.acc[i], l = Math.floor(i/(AV.T*AV.H)), g = MD.fullSet.has(l);
+      col[i*3] = (g ? 1.0 : 0.24)*v; col[i*3+1] = (g ? 0.76 : 0.86)*v; col[i*3+2] = (g ? 0.3 : 0.71)*v; }
+    o.pts.geometry.attributes.color.needsUpdate = true; $("av_sub").textContent = `${L} layers · ${T} tokens · ${NH} heads (rank 0) · gold = global attention · scaled per layer`; o.dirty=false; }
+  o.r.render(o.s, o.c);
+}
+/* activation space: hidden-state trajectories */
+function initSpace(){
+  const o = mk3("cv3_space"); if (!o) return; o.rad = o.rad0 = 34; o.phi = 1.0;
+  const N = 32*90; const pg = new THREE.BufferGeometry(); pg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N*3),3)); pg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N*3),3));
+  o.pts = new THREE.Points(pg, new THREE.PointsMaterial(addMat({vertexColors:true, size:1.1, sizeAttenuation:true}))); o.pts.frustumCulled=false; o.s.add(o.pts);
+  const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N*2*3),3)); lg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N*2*3),3));
+  o.trails = new THREE.LineSegments(lg, new THREE.LineBasicMaterial(addMat({vertexColors:true, opacity:0.55}))); o.trails.frustumCulled=false; o.s.add(o.trails);
+  const ax = new THREE.BufferGeometry(); ax.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-14,0,0,14,0,0, 0,-14,0,0,14,0, 0,0,-14,0,0,14]),3)); o.s.add(new THREE.LineSegments(ax, new THREE.LineBasicMaterial({color:0x1e242c})));
+  S3.space = o;
+}
+function drawSpace(){
+  const o = S3.space; if (!o || !place(o)) return;
+  if (o.dirty && VIZ.space.length){ const st = VIZ.spaceStat, H = VIZ.space, pos=o.pts.geometry.attributes.position.array, col=o.pts.geometry.attributes.color.array, lp=o.trails.geometry.attributes.position.array, lc=o.trails.geometry.attributes.color.array;
+    const nrm = (x,k)=> Math.max(-14, Math.min(14, (x-st.m[k])/Math.sqrt(st.v[k]+1e-6)*5.5)); let n=0, s=0; const rgb=[0,0,0];
+    for (let h=0;h<H.length;h++){ const age = 1-(h/(H.length-1||1)), f=H[h], T=f.T;
+      const trh = f.hues; for (let t=0;t<T;t++){ const x=nrm(f.p[t*3],0), y=nrm(f.p[t*3+1],1), z=nrm(f.p[t*3+2],2); if (trh && trh[t]){ rgb[0]=trh[t].r; rgb[1]=trh[t].g; rgb[2]=trh[t].b; } else tokenHue(t, T, rgb); const w=Math.pow(1-age, 1.5)*0.9+0.05;
+        pos.set([x,y,z], n*3); col.set([rgb[0]*w, rgb[1]*w, rgb[2]*w], n*3); n++;
+        if (h>0 && t<H[h-1].T){ const g=H[h-1]; lp.set([nrm(g.p[t*3],0),nrm(g.p[t*3+1],1),nrm(g.p[t*3+2],2), x,y,z], s*6); lc.set([rgb[0]*w*0.6,rgb[1]*w*0.6,rgb[2]*w*0.6, rgb[0]*w,rgb[1]*w,rgb[2]*w], s*6); s++; } } }
+    o.pts.geometry.setDrawRange(0,n); o.trails.geometry.setDrawRange(0,s*2);
+    for (const g of [o.pts.geometry, o.trails.geometry]){ g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }
+    $("as_sub").textContent = `${H[H.length-1].T} tokens · ${H.length} steps of trail`; o.dirty=false; }
+  o.r.render(o.s, o.c);
+}
+/* residual terrain: heightfield over (layer, time) */
+const RT = {W:48, D:120};
+function initTerrain(){
+  const o = mk3("cv3_terrain"); if (!o) return; o.rad = o.rad0 = 70; o.theta = 0.35; o.phi = 1.05; o.target.set(0, 3, -RT.D*0.5*0.5); o.auto = false;
+  const n = RT.W*RT.D, pos = new Float32Array(n*3), col = new Float32Array(n*3), idx = [];
+  for (let d=0; d<RT.D; d++) for (let w=0; w<RT.W; w++){ const i=d*RT.W+w; pos[i*3]=(w-(RT.W-1)/2)*0.9; pos[i*3+1]=0; pos[i*3+2]=-d*0.5; }
+  for (let d=0; d<RT.D-1; d++) for (let w=0; w<RT.W-1; w++){ const a=d*RT.W+w, b=a+1, c=a+RT.W, e=c+1; idx.push(a,c,b, b,c,e); }
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos,3)); g.setAttribute("color", new THREE.BufferAttribute(col,3)); g.setIndex(idx);
+  o.mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({vertexColors:true, side:THREE.DoubleSide, transparent:true, opacity:0.85})); o.s.add(o.mesh);
+  o.wire = new THREE.Mesh(g, new THREE.MeshBasicMaterial({color:0xc8f542, wireframe:true, transparent:true, opacity:0.12})); o.s.add(o.wire);
+  S3.terrain = o;
+}
+function drawTerrain(){
+  const o = S3.terrain; if (!o || !place(o)) return;
+  if (o.dirty && VIZ.rib.length){ const H = VIZ.rib.slice(-RT.D), pos=o.mesh.geometry.attributes.position.array, col=o.mesh.geometry.attributes.color.array; let mx=1e-6; for (const r of H) for (const v of r) if (v>mx) mx=v;
+    for (let d=0; d<RT.D; d++){ const r = H[H.length-1-d]; for (let w=0; w<RT.W; w++){ const i=d*RT.W+w; const v = r && w<r.length ? logMag(r[w], mx) : 0; pos[i*3+1] = v*9; const t=Math.pow(v,0.8); col[i*3]=0.08+0.7*t; col[i*3+1]=0.16+0.8*t; col[i*3+2]=0.2+0.05*t; } }
+    o.mesh.geometry.attributes.position.needsUpdate=true; o.mesh.geometry.attributes.color.needsUpdate=true; o.mesh.geometry.computeBoundingSphere();
+    $("rt_sub").textContent = `${H.length} steps · log height · peak layer ${H[H.length-1].indexOf(Math.max(...H[H.length-1]))}`; o.dirty=false; }
+  o.r.render(o.s, o.c);
+}
+/* kv rack: requests as rows of blocks */
+// Pool occupancy in page IDs (hybrid layout: the global, sliding-window and drafter KV groups share one pool of page ids). "cached" pages are the prefix
+// cache; when free hits 0 the next prefill evicts the least recently used session.
+function poolText(s){ if (s.blocks_total == null) return ""; const inuse = s.blocks_total - (s.blocks_evictable ?? 0);
+  return ` · pool ${s.blocks_total} pages: ${inuse} in use · ${s.blocks_cached ?? "?"} cached · ${s.blocks_free ?? "?"} free${s.groups ? ` · ${s.groups} groups` : ""}`; }
+const fmtK = v => v >= 1e6 ? (v/1e6).toFixed(2)+"M" : v >= 1e3 ? Math.round(v/1e3)+"K" : String(v);
+// KV capacity in tokens = the engine's "GPU KV cache size" (all cache groups), relayed by the collector.
+const kvTotal = () => (LIVE && LIVE.kv_total_tokens) || null;
+function kvUsedText(s){ const tot = kvTotal(), pct = (s.usage*100); return tot ? `${fmtTok(s.usage*tot)} of ${fmtTok(tot)} tokens used · ${pct.toFixed(1)}%` : `${pct.toFixed(1)}% used`; }
+function kvTitle(base){ const tot = kvTotal(); return tot ? `${base} — ${fmtTok(tot)} tokens` : base; }
+function reqLabel(r){ return r.computed < r.prompt ? `${r.id} · ${fmtK(r.computed)}/${fmtK(r.prompt)} · prefill ${Math.round(100*r.computed/Math.max(r.prompt,1))}%` : `${r.id} · ${fmtK(r.total)} ctx · generating`; }
+function labelSprite(){ const cv = document.createElement("canvas"); cv.width = 512; cv.height = 64; const tex = new THREE.CanvasTexture(cv); tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthTest: false})); sp.scale.set(15, 1.9, 1); sp.userData = {cv, tex, text: ""}; return sp; }
+function setLabel(sp, text, col){ if (sp.userData.text === text && sp.userData.col === col) return; const {cv, tex} = sp.userData, g = cv.getContext("2d");
+  g.clearRect(0,0,cv.width,cv.height); g.fillStyle = "rgba(11,13,16,0.75)"; g.fillRect(0, 8, cv.width, 48); g.fillStyle = col; g.fillRect(10, 22, 18, 18);
+  g.font = "600 26px 'IBM Plex Mono', monospace"; g.fillStyle = "#e8eef4"; g.textBaseline = "middle"; g.fillText(text, 40, 32); tex.needsUpdate = true; sp.userData.text = text; sp.userData.col = col; }
+function initKV3(){
+  const o = mk3("cv3_kv"); if (!o) return; o.rad = o.rad0 = 40; o.theta = 0.5; o.phi = 1.0; o.target.set(0, 0, -8);
+  o.mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.8,1,0.8), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.95}), 8*96);
+  o.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(8*96*3), 3);   // must exist before the first render or the shader ignores per-instance colour
+  o.mesh.count = 0; o.s.add(o.mesh);
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(96, 20), new THREE.MeshBasicMaterial({color:0x12161c, side:THREE.DoubleSide})); fl.rotation.x = -Math.PI/2; fl.position.set(0,-0.81,-8); o.s.add(fl);
+  o.labels = [];
+  S3.kv = o;
+}
+function drawKV3(){
+  const o = S3.kv; if (!o || !place(o)) return;
+  const s = VIZ.sched; if (s && (o.dirty || s.ts !== o.lastTs)){ o.lastTs = s.ts; const pool = kvTotal() || s.pool_tokens || 3191849, pal=[C.acc,C.sky,C.coral,C.lav,C.gold,C.teal,C.pink,"#9db4ff"]; const m=new THREE.Matrix4(), c=new THREE.Color(); let n=0;
+    (s.reqs||[]).slice(0,8).forEach((r,k)=>{ const nb=Math.max(1, Math.min(96, Math.round(96*r.total/pool*4))), done=Math.round(nb*r.computed/Math.max(r.total,1)); const z=-(k-3.5)*2.2;
+      for (let i=0;i<nb&&n<768;i++){ const isHead = (r.computed<r.prompt && i===done), h = i<done ? 1.8 : 0.5; m.makeScale(1, isHead?2.6:h, 1); m.setPosition((i-(nb-1)/2)*0.95, (isHead?2.6:h)/2-0.8, z); o.mesh.setMatrixAt(n, m); c.set(pal[k%8]); if (i>=done && !isHead) c.multiplyScalar(0.3); if (isHead) c.set(0xffffff); o.mesh.setColorAt(n, c); n++; } });
+    o.mesh.count = n; o.mesh.instanceMatrix.needsUpdate = true; if (o.mesh.instanceColor) o.mesh.instanceColor.needsUpdate = true;
+    // one floating label per request row: id · computed/prompt · prefill % (or generating)
+    const reqs = (s.reqs||[]).slice(0,8);
+    while (o.labels.length < reqs.length){ const sp = labelSprite(); o.s.add(sp); o.labels.push(sp); }
+    while (o.labels.length > reqs.length){ const sp = o.labels.pop(); o.s.remove(sp); }
+    reqs.forEach((r,k)=>{ const sp = o.labels[k]; const nb=Math.max(1, Math.min(96, Math.round(96*r.total/pool*4))); setLabel(sp, reqLabel(r), pal[k%8]); sp.position.set(0, 2.9 + k*1.5, -(k-3.5)*2.2); });   // stacked above the rack so they never overlap
+    { const lg = $("kv3_legend"); if (lg){ lg.replaceChildren(); reqs.forEach((r,k)=>{ const row = document.createElement("div"); row.className = "row";
+        const sw = document.createElement("span"); sw.className = "sw"; sw.style.background = pal[k%8];
+        const tx = document.createElement("span"); tx.textContent = reqLabel(r);
+        const bar = document.createElement("span"); bar.className = "bar"; const fill = document.createElement("span"); fill.className = "fill"; fill.style.background = pal[k%8];
+        fill.style.width = (r.computed < r.prompt ? Math.round(100*r.computed/Math.max(r.prompt,1)) : 100) + "%"; bar.appendChild(fill);
+        row.append(sw, tx, bar); lg.appendChild(row); }); lg.hidden = reqs.length === 0; } }
+    $("kv3_sub").textContent = kvUsedText(s) + ` · ${(s.reqs||[]).length} live · ${s.waiting} waiting` + poolText(s); $("kv3_title").textContent = kvTitle("kv pool — requests × blocks"); o.dirty=false; }
+  o.r.render(o.s, o.c);
+}
+let init3done = false;
+function draw3D(){
+  if (!window.THREE){ $("cx_sub").textContent = "three.js failed to load"; return; }
+  if (!init3done){ init3done = true; initCortex(); initAttn(); initSpace(); initTerrain(); initKV3(); }
+  drawCortex(); drawAttn(); drawSpace(); drawTerrain(); drawKV3();
+}
+function setMode(three){ VIZ.three = three; localStorage.setItem("viz_mode", three?"3d":"2d"); $("mode_btn").textContent = three?"3D":"2D"; $("mode_btn").className = "mode"+(three?" on":""); $("agrid3d").hidden = !three; $("agrid").hidden = three; for (const sc of Object.values(S3)) sc.dirty = true; }
+$("mode_btn").onclick = ()=> setMode(!VIZ.three);
+setMode(VIZ.three);
+if (new URLSearchParams(location.search).get("mode") === "2d") setMode(false);
+$("ambient_btn").onclick = () => { VIZ.ambient = !VIZ.ambient; document.body.classList.toggle("ambient", VIZ.ambient); $("ambient_btn").textContent = VIZ.ambient ? "◂ EXIT" : "AMBIENT ▸"; drawViz(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && VIZ.ambient) $("ambient_btn").click(); });
+if (new URLSearchParams(location.search).get("ambient") === "1") $("ambient_btn").click();
+setInterval(fetchViz, 90);
+(function loop(){ drawViz(); requestAnimationFrame(loop); })();
+
+/* ---------------- loops ---------------- */
+setInterval(()=>{ if(view.live){ view.t1=Date.now(); fetchHist(); } fetchLive(); }, 2500);
+setInterval(fetchTotals, 60000);
+addEventListener("resize", drawAll);
+fetchLive(); fetchHist(); fetchTotals();
+</script>
+</body>
+</html>
