@@ -31,8 +31,9 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   against total x utilization even when the pool is pinned; default 0.92 can never pass on a Spark),
   `VLLM_USE_DEEP_GEMM=0` (DeepGEMM corrupts fp8 on SM12x), `--no-async-scheduling` (spec decode + async = garbage under
   concurrency), `cudagraph_mode FULL_DECODE_ONLY` (required by the patched attention builder), `--kv-cache-memory` pinned
-  per rank (no probing on unified memory), `--generation-config auto` + `repetition_penalty 1.05` (agents that send no
-  sampling params loop otherwise), audio tower skipped (`"audio":0`), images up to 800/request, 16 sequences with CUDA
+  per rank (no probing on unified memory), `--generation-config auto` (the checkpoint's temperature 1.0 / top_p 0.95; no
+  repetition penalty: vLLM applies it to every prompt token too, which in a coding agent suppresses the identifiers the
+  model just read and has to copy verbatim into edits), audio tower skipped (`"audio":0`), images up to 800/request, 16 sequences with CUDA
   graphs up to 128 tokens (16 x 8 DFlash verify tokens), `--enable-prompt-tokens-details` (responses report
   `usage.prompt_tokens_details.cached_tokens`).
 * **NVFP4 KV cache** (`--kv-cache-dtype nvfp4`, default): `patches/nvfp4_diffkv.py` writes fp4 nibbles + e4m3 scales per 16
@@ -41,6 +42,13 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   `overlay/patch_page_unify.py` stops vLLM padding every target KV page up to the fp8 drafter's page (which made the
   NVFP4 pool smaller than fp8); `overlay/patch_flashinfer_group_dtype.py` and `patch_kv_layout_fallback.py` let the
   drafter keep its own fp8 cache.
+* **Chat template**: MiMo's original (`overlay/patch_chat_template.py`, `MIMO26_THINK_PREFILL=none`). The
+  dealignai UNCENSORED checkpoint differs from `XiaomiMiMo/MiMo-V2.6-Flash-RL` in one weight shard
+  (`model_pp0_ep0_shard0`) and in `chat_template.jinja`, which prefills every thinking block with "The user has asked a
+  specific research or creative-writing question...". In a coding agent that sentence follows every tool result and the
+  model obeys it: after "continue my project" and three file reads its thinking went to Aristotle's Poetics or Shapley
+  values in 4 of 4 samples; with the original template it planned the TODO items in 4 of 4 (`tests/agent_check.py`).
+  Config, generation config, tokenizer, processor and DFlash files are byte-identical to the original.
 * **Thinking**: on by default (chat template); `chat_template_kwargs.enable_thinking` and `reasoning_effort` (none =
   off) both work, streamed or not (`tests/thinking_check.py`). Requests with a JSON `response_format` run on the
   no-thinking path (`overlay/patch_json_nothink.py`): with thinking on, ~1 in 5 strict-JSON requests otherwise came
@@ -54,6 +62,7 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
 ./start.sh check      # preflight + resolved config + the docker commands, no launch
 ./start.sh restart    # stop + start; ./start.sh status | logs [worker] | stop
 tests/smoke.sh        # chat / reasoning / tool call / vision through the API
+tests/agent_check.py  # coding-agent conversation at temperature 1.0: does the thinking stay on the project?
 ```
 GLM and MiMo cannot run at once (memory); `start.sh` refuses while a `glm53-exl3-*` container runs, and the GLM kit refuses
 while :8888 is held. A socat forwarder on the other node (see the GLM kit's `host-setup/`) keeps the old API address working.

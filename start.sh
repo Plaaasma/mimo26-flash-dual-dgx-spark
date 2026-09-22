@@ -58,7 +58,7 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-300000}"; MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"; MAX
 SPEC_METHOD="${SPEC_METHOD:-dflash}"; DFLASH_TOKENS="${DFLASH_TOKENS:-7}"; MTP_TOKENS="${MTP_TOKENS:-3}"
 MOE_BACKEND="${MOE_BACKEND:-marlin}"; LINEAR_BACKEND="${LINEAR_BACKEND:-auto}"
 CUDAGRAPH_MODE="${CUDAGRAPH_MODE:-FULL_DECODE_ONLY}"; CAPTURE_SIZES="${CAPTURE_SIZES:-1 2 4 8 16 32 64}"
-ASYNC_SCHED="${ASYNC_SCHED:-0}"; REP_PENALTY="${REP_PENALTY:-1.05}"
+ASYNC_SCHED="${ASYNC_SCHED:-0}"; REP_PENALTY="${REP_PENALTY:-1.0}"
 LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-0}"; SKIP_MM_PROFILING="${SKIP_MM_PROFILING:-1}"
 if [ -z "${LIMIT_MM:-}" ]; then LIMIT_MM='{"image":16,"video":1,"audio":0}'; fi
 if [ -z "${MM_PROC_KWARGS:-}" ]; then MM_PROC_KWARGS='{"max_pixels":2073600}'; fi
@@ -253,6 +253,8 @@ fi
 shopt -s nullglob
 for p in /opt/mimo26/overlay/patch_*.py; do say "patch: $(basename "$p")"; python3 "$p"; done
 shopt -u nullglob
+# chat template with a thinking prefill that does not misdescribe the request (overlay/patch_chat_template.py)
+[ -f /tmp/mimo26_chat_template.jinja ] && ARGS+=(--chat-template /tmp/mimo26_chat_template.jinja)
 say "launching: vllm serve ${ARGS[*]}"
 exec vllm serve "${ARGS[@]}"
 EOS
@@ -305,7 +307,8 @@ container_env() {
     for v in VLLM_DIFFKV_FULL_ATTN_SEGMENTS VLLM_DIFFKV_PREFILL_BLOCK_M VLLM_DIFFKV_PREFILL_NUM_WARPS VLLM_DIFFKV_SPEC_3D_MAX_Q \
              VLLM_DIFFKV_SPEC_3D_BLOCK_M VLLM_DIFFKV_CUSTOM_PREFILL_MIN_Q VLLM_CA_MAX_SIZE_MB VLLM_ATTENTION_BACKEND \
              MIMO26_IT_LOCAL_READS MIMO26_NAN_PROBE MIMO26_PARAM_SUMS MIMO26_PAGE_UNIFY MIMO26_JSON_NOTHINK \
-             MIMO26_NVFP4_DQ_MIN_Q MIMO26_NVFP4_DQ_MAX_MB MIMO26_VIZ MIMO26_VIZ_UDP MIMO26_VIZ_HZ MIMO26_VIZ_MAX_T MIMO26_VIZ_STRICT; do
+             MIMO26_NVFP4_DQ_MIN_Q MIMO26_NVFP4_DQ_MAX_MB MIMO26_VIZ MIMO26_VIZ_UDP MIMO26_VIZ_HZ MIMO26_VIZ_MAX_T MIMO26_VIZ_STRICT \
+             MIMO26_THINK_PREFILL; do
         [ -n "${!v:-}" ] && common+=("$v=${!v}")
     done
     for v in SERVED_MODEL_NAME SERVED_MODEL_ALIASES PORT TP NNODES HEAD_IP MASTER_PORT MODEL_DIR \
