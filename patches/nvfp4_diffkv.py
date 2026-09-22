@@ -20,8 +20,17 @@ import triton
 import triton.language as tl
 
 
-def nvfp4_row_bytes(head_size_qk: int, head_size_v: int) -> int:
+ROW_ALIGN = 4  # 180-B rows for MiMo (4-byte aligned). Page commensurability with other KV groups (the fp8 DFlash
+# drafter) is handled by overlay/patch_page_unify.py, not by padding rows: padding to 192 B would cost 6% of the pool.
+
+
+def nvfp4_payload_bytes(head_size_qk: int, head_size_v: int) -> int:
     return head_size_qk // 2 + head_size_qk // 16 + head_size_v // 2 + head_size_v // 16
+
+
+def nvfp4_row_bytes(head_size_qk: int, head_size_v: int) -> int:
+    n = nvfp4_payload_bytes(head_size_qk, head_size_v)
+    return (n + ROW_ALIGN - 1) // ROW_ALIGN * ROW_ALIGN
 
 
 def nvfp4_offsets(head_size_qk: int, head_size_v: int) -> tuple[int, int, int, int]:
@@ -141,5 +150,5 @@ def dequant_nvfp4_cache(kv_cache: torch.Tensor, head_size_qk: int, head_size_v: 
         return x * s
 
     k = side(kv_cache[..., kd:ks], kv_cache[..., ks:vd], head_size_qk)
-    v = side(kv_cache[..., vd:vs], kv_cache[..., vs:], head_size_v)
+    v = side(kv_cache[..., vd:vs], kv_cache[..., vs:vs + head_size_v // 16], head_size_v)
     return torch.cat([k, v], dim=-1)
