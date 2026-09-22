@@ -32,7 +32,18 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   `VLLM_USE_DEEP_GEMM=0` (DeepGEMM corrupts fp8 on SM12x), `--no-async-scheduling` (spec decode + async = garbage under
   concurrency), `cudagraph_mode FULL_DECODE_ONLY` (required by the patched attention builder), `--kv-cache-memory` pinned
   per rank (no probing on unified memory), `--generation-config auto` + `repetition_penalty 1.05` (agents that send no
-  sampling params loop otherwise), audio tower skipped (`"audio":0`), images up to 800/request.
+  sampling params loop otherwise), audio tower skipped (`"audio":0`), images up to 800/request, 16 sequences with CUDA
+  graphs up to 128 tokens (16 x 8 DFlash verify tokens).
+* **NVFP4 KV cache** (`--kv-cache-dtype nvfp4`, default): `patches/nvfp4_diffkv.py` writes fp4 nibbles + e4m3 scales per 16
+  values (180 B/token/head vs 320 fp8); the DiffKV kernel decodes them in place for decode and spec-verify, and prefill
+  on the global layers dequantizes the blocks a chunk touches once into bf16 (exact) and runs the bf16 path.
+  `overlay/patch_page_unify.py` stops vLLM padding every target KV page up to the fp8 drafter's page (which made the
+  NVFP4 pool smaller than fp8); `overlay/patch_flashinfer_group_dtype.py` and `patch_kv_layout_fallback.py` let the
+  drafter keep its own fp8 cache.
+* **Thinking**: on by default (chat template); `chat_template_kwargs.enable_thinking` and `reasoning_effort` (none =
+  off) both work, streamed or not (`tests/thinking_check.py`). Requests with a JSON `response_format` run on the
+  no-thinking path (`overlay/patch_json_nothink.py`): with thinking on, ~1 in 5 strict-JSON requests otherwise came
+  back with the reasoning running to max_tokens and an empty `content`.
 
 ## Commands
 ```
@@ -57,15 +68,29 @@ Weights ~88 GB per rank + drafter; the KV pool is `KV_CACHE_MEMORY` per rank (fp
 reclaims cold pages to zram when a node drops under `MIMO26_BOOT_GUARD_MIB`. Never probe memory by trial on a Spark:
 an overshoot livelocks the node (no OOM killer).
 
-## Measured (2026-09-22, tonyd's fixed prompt set v1, fp8 KV, DFlash 7, temperature 0)
-| | this kit | tonyd's GB10 recipe |
-|---|---|---|
-| C1 aggregate / per-stream | 35.5 / 40.7 tok/s | 45.6 / 53.3 |
-| C6 aggregate / per-stream | 106.9 / 21.5 tok/s | 155.8 / 31.2 |
-| cold prefill @2K / @32K | 2,283 / 2,171 tok/s | 1,947 / 1,425 |
-| DFlash accepted per step (coding / structured / prose) | 5.5 / 6.2 / 1.1 | 5.2 / 6.9 / 1.2 |
-| KV pool (10 GB pin, fp8) | 1,503,764 tokens | 1.87M at GMU 0.90 |
-| boot to healthy | 124-155 s | ~11 min |
+## Measured (2026-09-22, NVFP4 KV, 16 sequences, DFlash 7, tonyd's fixed prompt set v1, temperature 0)
+| streams | aggregate tok/s | per-stream tok/s | mean TTFT |
+|---|---|---|---|
+| 1 | 40.7 | 46.5 | 0.35 s |
+| 2 | 55.7 | 33.6 | 0.58 s |
+| 4 | 96.4 | 29.0 | 0.57 s |
+| 8 | 153.7 | 23.7 | 0.66 s |
+| 12 | 198.8 | 20.0 | 0.78 s |
+| 16 | 233.1 | 18.0 | 0.90 s |
+
+Per stream at 1 stream by category: coding 69, structured 72, math 62, json 45, reasoning 34, prose 22, narrative 18
+(DFlash accepts 5-6 of 7 drafts on code/structured text, ~1 on prose).
+
+Long context (unique filler document, passcode at 50% depth, NVFP4 KV): 169K tokens prefilled in 111 s (1,530 tok/s),
+338K in 325 s (1,041 tok/s), 661K in 1,002 s (660 tok/s); the passcode was recalled at every length; time spent
+outside the engine (tokenization, rendering) stayed under 2 s.
+
+| | this kit (NVFP4) | this kit (fp8) | tonyd's GB10 recipe (fp8) |
+|---|---|---|---|
+| KV pool at a 12 GB/rank pin | 3,191,849 tokens | 1,804,514 | 1.87M at GMU 0.90 |
+| 1 / 6 streams aggregate | 38.3 / 100.1 | 35.5 / 106.9 | 45.6 / 155.8 |
+| cold prefill @2K / @32K | 2,012 / 1,982 tok/s | 2,283 / 2,171 | 1,947 / 1,425 |
+| boot to healthy | 140-170 s | 124-155 s | ~11 min |
 
 Where a decode step goes (torch profiler, 1 stream, ~87-116 ms per verify step of 8 tokens): Marlin MXFP4 MoE ~50%
 (reads every distinct expert the 8 tokens route to; at memory bandwidth), NCCL all-reduce ~20% (waiting for the slower
