@@ -55,7 +55,8 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   the drafter's oldest pages while the worker's block-table row keeps their ids; the shared pool hands them to the NVFP4
   target layers, whose packed bytes include fp8 NaN encodings, and XQA still loads the window-edge tile below the
   window (scores masked, but 0 x NaN = NaN in P.V). The draft came out NaN on every step: 8 of 8 accepted up to ~1,070
-  tokens, exactly 1 after (same report: tonyd2wild/MiMo-V2.6-Flash-DGX-Spark-Recipe#2).
+  tokens, exactly 1 after. It needs the drafter's KV dtype to differ from the layers that reuse its pages (NVFP4 target
+  + fp8 drafter here); an all-fp8 or all-bf16 setup only ever writes finite values.
   `overlay/patch_dflash_swa_stale_pages.py` points those entries at an in-window page (the positions are masked
   anyway): counting to 3,000 now stays at 8.00 per step, 4 concurrent streams accept 7 of 7 drafts (167 tok/s
   aggregate), code answers accept 4.2-5.6 per step at 0.5K-46K-token prompts, and prefix-cache hits cost nothing
