@@ -49,14 +49,17 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   model obeys it: after "continue my project" and three file reads its thinking went to Aristotle's Poetics or Shapley
   values in 4 of 4 samples; with the original template it planned the TODO items in 4 of 4 (`tests/agent_check.py`).
   Config, generation config, tokenizer, processor and DFlash files are byte-identical to the original.
-* **Speculative decoding: MTP** (`SPEC_METHOD=mtp`, the checkpoint's own MTP head, 3 draft tokens). DFlash (the
-  bundled 5-layer drafter, `SPEC_METHOD=dflash`) accepts 8 of 8 tokens per step on predictable text, but only for the
-  first ~1,000 generated tokens of a response: counting to 3,000 (greedy) gave 7.7-8.0 per step up to 999 tokens and
-  1.1-1.5 after, with or without the page-unification patch, with the draft run eagerly, and in mixed prefill/decode
-  steps; the FlashInfer drafter kernel matches a reference exactly, so it is in vLLM's DFlash path (same report:
-  tonyd2wild/MiMo-V2.6-Flash-DGX-Spark-Recipe#2). DFlash also drafts from garbage context on prefix-cache hits
-  (vllm#47930), which agent traffic hits almost always. MTP builds no draft context: 2.2-2.7 of 4 per step, flat to
-  2,400 tokens, and the KV pool grows to 3,557,838 tokens without the drafter's cache.
+* **Speculative decoding: DFlash** (`SPEC_METHOD=dflash`, the bundled 5-layer drafter, 7 draft tokens; `mtp` = the
+  checkpoint's own MTP head, 2.2-2.7 of 4 per step, KV pool 3,557,838 tokens without the drafter's cache). The drafter
+  attends over a 1,024-token sliding window through FlashInfer XQA. Once a sequence outgrows it, the scheduler frees
+  the drafter's oldest pages while the worker's block-table row keeps their ids; the shared pool hands them to the NVFP4
+  target layers, whose packed bytes include fp8 NaN encodings, and XQA still loads the window-edge tile below the
+  window (scores masked, but 0 x NaN = NaN in P.V). The draft came out NaN on every step: 8 of 8 accepted up to ~1,070
+  tokens, exactly 1 after (same report: tonyd2wild/MiMo-V2.6-Flash-DGX-Spark-Recipe#2).
+  `overlay/patch_dflash_swa_stale_pages.py` points those entries at an in-window page (the positions are masked
+  anyway): counting to 3,000 now stays at 8.00 per step, 4 concurrent streams accept 7 of 7 drafts (167 tok/s
+  aggregate), code answers accept 4.2-5.6 per step at 0.5K-46K-token prompts, and prefix-cache hits cost nothing
+  measurable on short follow-up turns (vllm#47930 did not reproduce here).
 * **Tool calls**: `overlay/patch_qwen3_toolparse.py` keeps string arguments that contain a literal `</parameter>`,
   `</function>` or `<parameter=` intact (the stock qwen3/mimo parser cut them at the first tag and leaked the rest into
   `content` when streaming, i.e. silently truncated file writes); normal calls parse byte-identically.
