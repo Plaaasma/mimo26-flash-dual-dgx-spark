@@ -49,6 +49,19 @@ the dashboard, zram/reclaim memory rails, orphan-shm cleanup.
   model obeys it: after "continue my project" and three file reads its thinking went to Aristotle's Poetics or Shapley
   values in 4 of 4 samples; with the original template it planned the TODO items in 4 of 4 (`tests/agent_check.py`).
   Config, generation config, tokenizer, processor and DFlash files are byte-identical to the original.
+* **Speculative decoding: MTP** (`SPEC_METHOD=mtp`, the checkpoint's own MTP head, 3 draft tokens). DFlash (the
+  bundled 5-layer drafter, `SPEC_METHOD=dflash`) accepts 8 of 8 tokens per step on predictable text, but only for the
+  first ~1,000 generated tokens of a response: counting to 3,000 (greedy) gave 7.7-8.0 per step up to 999 tokens and
+  1.1-1.5 after, with or without the page-unification patch, with the draft run eagerly, and in mixed prefill/decode
+  steps; the FlashInfer drafter kernel matches a reference exactly, so it is in vLLM's DFlash path (same report:
+  tonyd2wild/MiMo-V2.6-Flash-DGX-Spark-Recipe#2). DFlash also drafts from garbage context on prefix-cache hits
+  (vllm#47930), which agent traffic hits almost always. MTP builds no draft context: 2.2-2.7 of 4 per step, flat to
+  2,400 tokens, and the KV pool grows to 3,557,838 tokens without the drafter's cache.
+* **Tool calls**: `overlay/patch_qwen3_toolparse.py` keeps string arguments that contain a literal `</parameter>`,
+  `</function>` or `<parameter=` intact (the stock qwen3/mimo parser cut them at the first tag and leaked the rest into
+  `content` when streaming, i.e. silently truncated file writes); normal calls parse byte-identically.
+* **Scheduling**: `--long-prefill-token-threshold 2048` so a very long prompt takes at most half of each step's 4,096
+  tokens; without it a 400K-token prefill (~10 min) queued every other user's new request behind it.
 * **Thinking**: on by default (chat template); `chat_template_kwargs.enable_thinking` and `reasoning_effort` (none =
   off) both work, streamed or not (`tests/thinking_check.py`). Requests with a JSON `response_format` run on the
   no-thinking path (`overlay/patch_json_nothink.py`): with thinking on, ~1 in 5 strict-JSON requests otherwise came

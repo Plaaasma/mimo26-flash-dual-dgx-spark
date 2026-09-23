@@ -45,6 +45,20 @@ def _mimo26_viz_sched(sched, scheduler_output):  ''' + MARK + ''' viz-sched
     import os, time, json, socket
     if os.environ.get("MIMO26_VIZ", "0") != "1":
         return
+    # Prompt tokens actually computed this step (every step, not just the sampled ones): the live prefill rate.
+    # _update_after_schedule has already advanced num_computed_tokens, so the part of this step's tokens that was
+    # still prompt is min(scheduled, prompt - (computed - scheduled)). Prefix-cache hits are never scheduled.
+    try:
+        if scheduler_output is not None and scheduler_output.num_scheduled_tokens:
+            tot = getattr(sched, "_m26_prefill_total", 0)
+            for rid, n in scheduler_output.num_scheduled_tokens.items():
+                r = sched.requests.get(rid)
+                if r is not None:
+                    before = int(r.num_computed_tokens) - int(n)
+                    tot += min(int(n), max(0, int(r.num_prompt_tokens) - before))
+            sched._m26_prefill_total = tot
+    except Exception:
+        pass
     now = time.monotonic()
     if now - getattr(sched, "_m26_viz_ts", 0.0) < 0.25:
         return
@@ -78,7 +92,8 @@ def _mimo26_viz_sched(sched, scheduler_output):  ''' + MARK + ''' viz-sched
             pass
         frame = {"kind": "sched", "ts": time.time(), "usage": float(sched.kv_cache_manager.usage),
                  "pool_tokens": int(nb) * int(getattr(sched, "block_size", 0) or 0),
-                 "waiting": len(sched.waiting), "reqs": reqs, **pool}
+                 "waiting": len(sched.waiting), "reqs": reqs,
+                 "prefill_total": int(getattr(sched, "_m26_prefill_total", 0)), **pool}
         sock.sendto(json.dumps(frame).encode(), (host, int(port)))
     except Exception:
         pass

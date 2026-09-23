@@ -61,7 +61,9 @@ MODEL_PROFILES = {
     # attention fp8 qkv + bf16 o_proj 3.0 GB, dense MLP 0.1, routers 0.1, lm_head 0.63, DFlash drafter (bf16 5 layers,
     # 2.9 GB) 1.47 + its lm_head pass 0.63 = ~5.9 GB. KV: 9 global layers x 2 kv heads/rank x 180 B = 3,240 B per
     # context token; 39 sliding-window layers x 128 tokens x 4 heads x 180 B = 3.6 MB per request.
-    "mimo": {"name": "mimo-v2.6-flash", "flops_per_token": 29.6e9, "page_tokens": 64,
+    # With MTP instead of DFlash the drafter's ~2.1 GB/rank/step (5 bf16 layers + its lm_head pass) becomes one MTP
+    # layer (~0.3 GB/rank incl. its routed experts at low batch): "fixed_gb_mtp".
+    "mimo": {"name": "mimo-v2.6-flash", "flops_per_token": 29.6e9, "page_tokens": 64, "fixed_gb_mtp": 4.1,
              "bw": {"experts": 256, "topk": 8, "moe_layers": 47, "expert_gb": 0.00668, "fixed_gb": 5.9,
                     "kv_bytes_per_tok": 3240, "swa_bytes_per_req": 3.6e6, "kv_gb_per_run": 0.0, "peak_gb_s": 273}},
     # GLM-5.3-Flash EXL3 (retired 2026-09-22): derivation at the tflops fallback below
@@ -351,6 +353,38 @@ def boot_progress():
 # container start; the scheduler snapshot's pool_tokens is attention-page tokens and overstates it ~2.4x.
 _kv_total_cache = {"started": None, "tokens": None, "t": 0.0}
 
+def _effective_profile(drafter):
+    """Model profile with the bandwidth model's fixed weights matched to the running draft method."""
+    prof = model_profile()
+    if drafter and drafter.get("method") == "mtp" and prof.get("fixed_gb_mtp"):
+        prof = {**prof, "bw": {**prof["bw"], "fixed_gb": prof["fixed_gb_mtp"]}}
+    return prof
+
+
+_drafter_cache = {"started": None, "v": None}
+
+def drafter_info():
+    """Speculative-decoding method of the running engine, from its log (cached per container start):
+    {"method": "mtp"|"dflash"|..., "arch": draft architecture, "k": draft tokens per step}."""
+    st, started, _fin = _container_state()
+    c = _drafter_cache
+    if c["started"] == started and c["v"] is not None:
+        return c["v"]
+    v = None
+    if st == "running":
+        try:
+            out = _sp.run(DOCKER + ["logs", head_ctn()], capture_output=True, text=True, timeout=8)
+            log = out.stdout + out.stderr
+            archs = _re.findall(r"Resolved architecture: (\w+)", log)
+            m = _re.search(r"'speculative_config': \{'method': '(\w+)'.*?'num_speculative_tokens': (\d+)", log)
+            if m:
+                v = {"method": m.group(1), "k": int(m.group(2)), "arch": archs[1] if len(archs) > 1 else None}
+        except Exception:
+            v = None
+    c["started"], c["v"] = started, v
+    return v
+
+
 def kv_total_tokens():
     st, started, _fin = _container_state()
     now = time.time()
@@ -420,7 +454,7 @@ def _fill_vllm(p, now, row, slot):
         "flops": psum(p, "vllm:estimated_flops_per_gpu_total"),
         # per-step context (prefill) tokens from the glm53 logger patch: counted
         # every engine step, including pure-prefill steps that produce no output
-        "ctx_live": psum(p, "vllm:glm53_ctx_tokens_total"),
+        "ctx_live": psum(p, "vllm:glm53_ctx_tokens_total") or state.get("viz_prefill_total", 0.0),
         "t": now,
     }
     kv = pget(p, "vllm:kv_cache_usage_perc")
@@ -474,7 +508,16 @@ def _fill_vllm(p, now, row, slot):
         dPrompt = max(0.0, cur["pp"] - pv["pp"])
         dCtx = cur.get("ctx_live", 0) - pv.get("ctx_live", 0)
         if cur.get("ctx_live", 0) > 0:
-            row["pp"] = max(dCtx, 0.0) / dt        # live: every step counted, no output needed
+            # live: every step counted, no output needed. Averaged over ~12 s: at long contexts one 4K prefill chunk
+            # takes several seconds, so a single 2.5 s tick alternates between 0 and a spike.
+            win = state.setdefault("ctx_win_" + slot, [])
+            if win and cur["ctx_live"] < win[-1][1]:
+                win.clear()                        # counter reset (engine or collector restart)
+            win.append((now, cur["ctx_live"]))
+            while len(win) > 2 and now - win[0][0] > 12.0:
+                win.pop(0)
+            span = now - win[0][0]
+            row["pp"] = (win[-1][1] - win[0][1]) / span if span > 0 else max(dCtx, 0.0) / dt
         else:
             row["pp"] = max(pp_live, 0.0) if dIt > 0 else dPrompt / dt
         dC = max(0.0, cur.get("iter_cnt", 0) - pv.get("iter_cnt", 0))
@@ -606,7 +649,8 @@ def tick():
     state["live"] = {"ts": now, "engine_up": engine_up, "model": state["model"], "kv_total_tokens": kv_total_tokens(),
                      "node_labels": NODE_LABELS, "proc_cap_mib": PROC_CAP_MIB,
                      "engine": state["engine"], "row": row, "nodes": nodes,
-                     "profile": model_profile(), "kit": _active_kit()[1],
+                     "profile": _effective_profile(drafter_info() if engine_up else None), "kit": _active_kit()[1],
+                     "drafter": drafter_info() if engine_up else None,
                      "boot": None if engine_up else boot_progress()}
     return now, row
 
@@ -628,6 +672,27 @@ def loop():
         time.sleep(max(0.2, TICK - (time.time() - t0)))
 
 # ---------------- API ----------------
+def _prefill_counter(f):
+    """Live prefill tokens for the throughput panel. The MiMo scheduler hook sends `prefill_total` (prompt tokens
+    computed, counted every step); without it, derive the same from how far each running request's prompt progress
+    moved since its previous snapshot (a request's first snapshot is not counted: it includes prefix-cache hits)."""
+    if "prefill_total" in f:
+        state["viz_prefill_total"] = float(f["prefill_total"]) + state.get("viz_prefill_offset", 0.0)
+        return
+    last = state.setdefault("pf_last", {})
+    total = state.get("viz_prefill_total", 0.0)
+    seen = {}
+    for q in f.get("reqs") or []:
+        done = min(q.get("computed") or 0, q.get("prompt") or 0)
+        prev = last.get(q.get("id"))
+        if prev is not None and done > prev:
+            total += done - prev
+        seen[q.get("id")] = done
+    state["pf_last"] = seen
+    state["viz_prefill_total"] = total
+    state["viz_prefill_offset"] = total          # keeps the counter monotonic if the engine counter takes over
+
+
 def viz_udp_listener(port=9103):
     """Receive live-activation frames ('act') and scheduler snapshots ('sched')
     sent by the engine hooks (mimo26_viz_runtime / glm53_viz_runtime + the kit's patch_viz_hooks) as UDP JSON."""
@@ -641,7 +706,9 @@ def viz_udp_listener(port=9103):
             f = json.loads(data.decode())
             k = f.get("kind")
             if k == "act": state["viz_act"] = f
-            elif k == "sched": state["viz_sched"] = f
+            elif k == "sched":
+                state["viz_sched"] = f
+                _prefill_counter(f)
             elif k == "viz_status": state["viz_status"] = f
             elif k == "act3d": state["viz_act3d"] = f
             elif k == "act3h": state["viz_act3h"] = f

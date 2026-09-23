@@ -268,7 +268,7 @@ body.ambient #gaugestrip canvas{height:120px!important;flex:none}
     <div id="ambient">
       <div class="ah"><h3>live activations</h3><span class="st" id="viz_state">waiting for engine telemetry</span><button class="mode on" id="mode_btn">3D</button><button id="ambient_btn">AMBIENT ▸</button></div>
       <div id="agrid3d">
-        <div class="apanel cortex"><div class="ph"><h4>cortex — mimo-v2.6-flash: 48 layers · 9 global + 39 swa · 47 moe × 256 · dflash</h4><span class="sub" id="cx_sub">drag to orbit · right-drag to pan · wheel to zoom · double-click to reset</span></div><canvas id="cv3_cortex"></canvas></div>
+        <div class="apanel cortex"><div class="ph"><h4>cortex — mimo-v2.6-flash: 48 layers · 9 global + 39 swa · 47 moe × 256 · draft head</h4><span class="sub" id="cx_sub">drag to orbit · right-drag to pan · wheel to zoom · double-click to reset</span></div><canvas id="cv3_cortex"></canvas></div>
         <div class="apanel"><div class="ph"><h4>attention heads — layer × token × head</h4><span class="sub" id="av_sub">—</span></div><canvas id="cv3_attn"></canvas></div>
         <div class="apanel"><div class="ph"><h4>activation space — final hidden state → 3-d</h4><span class="sub" id="as_sub">—</span></div><canvas id="cv3_space"></canvas></div>
         <div class="apanel"><div class="ph"><h4>attention terrain — layer × time × output magnitude</h4><span class="sub" id="rt_sub">—</span></div><canvas id="cv3_terrain"></canvas></div>
@@ -925,7 +925,7 @@ function initCortex(){
   const lab = (text, x, y, z, sx=13, sy=0.95, align) => { const sp = textSprite(sx, sy); setText(sp, text, null, align); sp.position.set(x,y,z); o.s.add(sp); return sp; };
   lab("tokenizer · vision encoder → embedding", -4.0, MD.yEmb-1.0, 4.0, 18, 1.15);
   lab("LM head → sampler", -4.0, MD.yHead+1.1, 4.0, 16, 1.15);
-  lab("DFlash drafter · 5 layers · 7 draft tokens / step", MD.xDraft, MD.yHead+1.6, 2.4, 21, 1.05);
+  o.drLabel = lab("draft head", MD.xDraft, MD.yHead+1.6, 2.4, 21, 1.05);
   lab("attention output magnitude", MD.xSpine-1.5, MD.yOf(MD.L)+0.6, 0, 13, 0.95);
   lab("attention heads (32 of 64) · context reach →", 0, MD.yOf(MD.L)+0.6, MD.zAttn, 20, 1.05);
   for (const l of MD.full) lab(`L${l} · global + ${l ? "moe" : "dense"}`, -12.6, MD.yOf(l), 0, 11, 0.9);
@@ -959,8 +959,11 @@ function drawCortex(){
       m.makeScale(1, 1, len); m.setPosition(headX(MD.H-1)+0.5, MD.yOf(l), MD.zAttn-0.4-len/2); o.rl.setMatrixAt(l, m);
       const w = g ? (maxCtx ? 0.95 : 0.35) : 0.5; o.rl.setColorAt(l, g ? c.setRGB(0.95*w, 0.7*w, 0.2*w) : c.setRGB(0.15*w, 0.75*w, 0.6*w)); }
     o.rl.instanceMatrix.needsUpdate = true; o.rl.instanceColor.needsUpdate = true;
-    // --- drafter: glows with the mean tokens accepted per request this step (1 + accepted drafts, of 8)
-    const acc = (a && a.acc) || [], accMean = acc.length ? acc.reduce((s,q)=>s+q[1],0)/acc.length : 0, dw = Math.min(1, accMean/8);
+    // --- drafter: which one runs (from the engine log via the collector) and how many tokens it got accepted
+    const dr = (LIVE && LIVE.drafter) || null, k = dr ? dr.k : 7, isMtp = dr && dr.method === "mtp";
+    setText(o.drLabel, dr ? (isMtp ? `MTP draft head · ${k} draft tokens / step` : `${dr.method.toUpperCase()} drafter · ${k} draft tokens / step`) : "draft head", null);
+    o.dr.count = isMtp ? 1 : 5;
+    const acc = (a && a.acc) || [], accMean = acc.length ? acc.reduce((s,q)=>s+q[1],0)/acc.length : 0, dw = Math.min(1, accMean/(k+1));
     for (let i=0;i<5;i++) o.dr.setColorAt(i, c.setRGB(0.05+0.45*dw, 0.06+0.25*dw, 0.08+0.85*dw)); o.dr.instanceColor.needsUpdate = true;
     // --- token dots + strands through the experts each token was routed to
     o.tk.count = Math.min(T, 32);
@@ -980,7 +983,7 @@ function drawCortex(){
     poolText3(o, o.tin, Math.min(tin.length, 8), MD.yEmb, -1, 0, 4.0); tin.slice(0,8).forEach(([id,txt],i) => setText(o.tin[i], txt, `hsl(${reqHue(id)*360},85%,60%)`));
     poolText3(o, o.tout, Math.min(tout.length, 8), MD.yHead, 1, 0, 4.0); tout.slice(0,8).forEach(([id,txt],i) => setText(o.tout[i], txt, `hsl(${reqHue(id)*360},85%,60%)`));
     const rq = (a && a.reqs) || []; $("cx_sub").innerHTML = (rq.length ? rq.map(([id,s,n]) => `<span style="color:hsl(${reqHue(id)*360},85%,60%)">■</span> ${id} · ${n} tok`).join(" &nbsp; ") : "no tokens this step")
-      + ` &nbsp;·&nbsp; 48 layers (9 global + 39 swa-128) · 47 moe × 256, top-8 · dflash 7 · ${maxCtx ? "longest context " + fmtK(maxCtx) + " · " : ""}drag to orbit · right-drag to pan`;
+      + ` &nbsp;·&nbsp; 48 layers (9 global + 39 swa-128) · 47 moe × 256, top-8 · ${dr ? dr.method + " " + dr.k : "spec decode"} · ${maxCtx ? "longest context " + fmtK(maxCtx) + " · " : ""}drag to orbit · right-drag to pan`;
     o.dirty = false;
   }
   o.r.render(o.s, o.c);
